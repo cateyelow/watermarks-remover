@@ -26,10 +26,19 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from common import emit_json, eprint  # noqa: E402
 
-VALID_SCHEMES = frozenset({
-    "tree_ring", "gaussian_shading", "stegastamp", "stable_signature",
-    "synthid", "hidden", "trustmark", "unknown", "none",
-})
+VALID_SCHEMES = frozenset(
+    {
+        "tree_ring",
+        "gaussian_shading",
+        "stegastamp",
+        "stable_signature",
+        "synthid",
+        "hidden",
+        "trustmark",
+        "unknown",
+        "none",
+    }
+)
 
 PIXEL_BASED_SCHEMES = frozenset({"stegastamp", "stable_signature", "hidden", "trustmark"})
 
@@ -50,7 +59,9 @@ def extract_spatial_features(image: np.ndarray) -> np.ndarray:
     """Spatial-domain features: edge density, local variance, histogram stats."""
     from scipy import ndimage
 
-    gray = np.mean(image.astype(np.float64), axis=2) if image.ndim == 3 else image.astype(np.float64)
+    gray = (
+        np.mean(image.astype(np.float64), axis=2) if image.ndim == 3 else image.astype(np.float64)
+    )
 
     sx = ndimage.sobel(gray, axis=0)
     sy = ndimage.sobel(gray, axis=1)
@@ -78,7 +89,9 @@ def extract_spatial_features(image: np.ndarray) -> np.ndarray:
 
 def extract_frequency_features(image: np.ndarray) -> np.ndarray:
     """Frequency-domain features: radial power, ring energy, phase coherence."""
-    gray = np.mean(image.astype(np.float64), axis=2) if image.ndim == 3 else image.astype(np.float64)
+    gray = (
+        np.mean(image.astype(np.float64), axis=2) if image.ndim == 3 else image.astype(np.float64)
+    )
 
     f = np.fft.fft2(gray)
     fshift = np.fft.fftshift(f)
@@ -147,9 +160,7 @@ class WatermarkClassifier:
 
         return self._classify_heuristic(freq, spat)
 
-    def _classify_heuristic(
-        self, freq: np.ndarray, spat: np.ndarray
-    ) -> ClassifyResult:
+    def _classify_heuristic(self, freq: np.ndarray, spat: np.ndarray) -> ClassifyResult:
         slope = freq[0]
         ring_energies = freq[1:4]
         phase_coherence = freq[4]
