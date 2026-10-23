@@ -148,9 +148,7 @@ def main() -> int:
     try:
         adapter = WavesAdapter(str(args.waves_dir), str(args.output_dir))
         t0 = time.monotonic()
-        result = adapter.run_attack(
-            args.watermark, args.engine, args.intensity, args.dataset
-        )
+        result = adapter.run_attack(args.watermark, args.engine, args.intensity, args.dataset)
         elapsed = time.monotonic() - t0
     except FileNotFoundError as e:
         eprint(str(e))
@@ -160,18 +158,20 @@ def main() -> int:
         return 1
 
     if args.json:
-        emit_json({
-            "watermark": args.watermark,
-            "engine": args.engine,
-            "intensity": args.intensity,
-            "tpr": round(result.tpr, 4),
-            "psnr": round(result.psnr, 2),
-            "ssim": round(result.ssim, 4),
-            "lpips": round(result.lpips, 4),
-            "fid": round(result.fid, 2),
-            "n_images": result.n_images,
-            "elapsed_s": round(elapsed, 2),
-        })
+        emit_json(
+            {
+                "watermark": args.watermark,
+                "engine": args.engine,
+                "intensity": args.intensity,
+                "tpr": round(result.tpr, 4),
+                "psnr": round(result.psnr, 2),
+                "ssim": round(result.ssim, 4),
+                "lpips": round(result.lpips, 4),
+                "fid": round(result.fid, 2),
+                "n_images": result.n_images,
+                "elapsed_s": round(elapsed, 2),
+            }
+        )
     else:
         eprint(
             f"{args.watermark}/{args.engine}: TPR={result.tpr:.3f} "
