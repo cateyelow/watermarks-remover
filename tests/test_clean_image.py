@@ -489,9 +489,17 @@ def test_classify_standalone_uses_original_image(tmp_path: Path, monkeypatch):
         return _real(self, path)
 
     monkeypatch.setattr(cw.WatermarkClassifier, "classify", spy)
-    monkeypatch.setattr("sys.argv", [
-        "clean_image.py", str(src), "-o", str(out), "--classify", "--json",
-    ])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "clean_image.py",
+            str(src),
+            "-o",
+            str(out),
+            "--classify",
+            "--json",
+        ],
+    )
 
     from io import StringIO
 
