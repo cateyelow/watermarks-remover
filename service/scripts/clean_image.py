@@ -21,6 +21,9 @@ ENGINE_NAMES = {
     "diffusion": "DiffusionPurification",
     "marknull": "MarkNull",
     "nfpa": "NFPA",
+    "fmdiffwa": "FMDiffWA",
+    "synthid_bypass": "SynthID Bypass",
+    "treering": "TreeRing",
     "flux3": "FLUX 3",
     "chain": "AttackChain",
 }
@@ -302,7 +305,7 @@ def main() -> int:
         eprint(f"error: {e}")
         return 1
 
-    if is_auto or (args.remove_pixel == "chain" and args.classify):
+    if is_auto:
         from attack_chain import run_chain
         from classify_watermark import WatermarkClassifier
 

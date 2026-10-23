@@ -34,16 +34,6 @@ def split_tiles(
     return tiles
 
 
-def _cosine_weight(size: int, overlap: int) -> np.ndarray:
-    """1D cosine feathering: ramps from 0 to 1 over the overlap region."""
-    w = np.ones(size, dtype=np.float64)
-    if overlap > 0 and overlap < size:
-        ramp = 0.5 * (1 - np.cos(np.linspace(0, np.pi, overlap)))
-        w[:overlap] = ramp
-        w[-overlap:] = ramp[::-1]
-    return w
-
-
 def _boundary_weight(size: int, overlap: int, at_start: bool, at_end: bool) -> np.ndarray:
     """1D weight: cosine ramp only on sides that overlap with another tile."""
     w = np.ones(size, dtype=np.float64)

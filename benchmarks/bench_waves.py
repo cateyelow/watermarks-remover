@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "service" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from common import emit_json, eprint  # noqa: E402
+from common import emit_json, eprint, subprocess_creationflags  # noqa: E402
 
 
 class WavesResult(NamedTuple):
@@ -105,6 +105,7 @@ class WavesAdapter:
                 text=True,
                 check=False,
                 timeout=600,
+                creationflags=subprocess_creationflags,
             )
             if result.returncode != 0:
                 eprint(f"engine {engine} failed on {img_path.name}: rc={result.returncode}")
