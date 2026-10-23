@@ -60,10 +60,10 @@ def resolve_device(raw: str | None = None) -> str:
 
 
 def compute_nlas(latent, noise) -> float:
-    """Fourier-domain cross-correlation between latent and noise, normalised.
+    """Fourier-domain phase coherence between latent and noise.
 
-    Returns a scalar in [0, 1].  High values indicate the latent carries a
-    watermark signal correlated with *noise*.
+    Returns a scalar in [0, 1]: ~0 for uncorrelated signals (random
+    phases), ~1 when cross-spectrum phases are locked (watermark present).
     """
     torch = _lazy_torch()
     with torch.no_grad():
@@ -71,9 +71,9 @@ def compute_nlas(latent, noise) -> float:
         for c in range(latent.shape[1]):
             l_fft = torch.fft.fft2(latent[:, c])
             n_fft = torch.fft.fft2(noise[:, c])
-            cross = (l_fft * n_fft.conj()).abs().mean()
-            norm = (l_fft.abs().mean() * n_fft.abs().mean()).clamp(min=1e-8)
-            scores.append((cross / norm).item())
+            cross = l_fft * n_fft.conj()
+            unit = cross / cross.abs().clamp(min=1e-8)
+            scores.append(unit.mean().abs().item())
         raw = sum(scores) / len(scores)
         return float(max(0.0, min(1.0, raw)))
 

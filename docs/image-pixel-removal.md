@@ -122,10 +122,15 @@ python benchmarks/bench_waves.py \
     --watermark tree_ring --output-dir results/ --json
 
 # With external decoder for accurate TPR
+# The --decoder command must accept: <img_path> --json
+# and print {"detected": true/false} to stdout.
+# Note: WAVES decode.py operates on directories, not single images,
+# so it is NOT directly compatible — write a thin wrapper or use
+# a watermark-specific ONNX decoder instead.
 python benchmarks/bench_waves.py \
     --waves-dir /path/to/dataset --engine chain \
     --watermark tree_ring --output-dir results/ --json \
-    --decoder python /path/to/waves/scripts/decode.py
+    --decoder python /path/to/your_decoder_wrapper.py
 
 # Full sweep (requires torch + CUDA for GPU engines)
 ./benchmarks/run_full_eval.sh --waves-dir /path/to/dataset --output-dir results/

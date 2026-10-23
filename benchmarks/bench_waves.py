@@ -30,6 +30,7 @@ from common import emit_json, eprint, subprocess_creationflags  # noqa: E402
 
 class WavesResult(NamedTuple):
     tpr: float
+    tpr_before: float
     psnr: float
     ssim: float
     lpips: float | None
@@ -188,6 +189,7 @@ class WavesAdapter:
         )
         return WavesResult(
             tpr=tpr_after,
+            tpr_before=tpr_before,
             psnr=float(np.mean(psnrs)) if psnrs else 0.0,
             ssim=float(np.mean(ssims)) if ssims else 0.0,
             lpips=None,
@@ -238,6 +240,7 @@ def main() -> int:
                 "watermark": args.watermark,
                 "engine": args.engine,
                 "intensity": args.intensity,
+                "tpr_before": round(result.tpr_before, 4),
                 "tpr": round(result.tpr, 4),
                 "psnr": round(result.psnr, 2),
                 "ssim": round(result.ssim, 4),
@@ -251,7 +254,8 @@ def main() -> int:
         lpips_s = f"{result.lpips:.4f}" if result.lpips is not None else "N/A (needs torch)"
         fid_s = f"{result.fid:.2f}" if result.fid is not None else "N/A (needs torch)"
         eprint(
-            f"{args.watermark}/{args.engine}: TPR={result.tpr:.3f} "
+            f"{args.watermark}/{args.engine}: "
+            f"TPR_before={result.tpr_before:.3f} TPR={result.tpr:.3f} "
             f"PSNR={result.psnr:.1f} SSIM={result.ssim:.3f} "
             f"LPIPS={lpips_s} FID={fid_s} "
             f"n={result.n_images} ({elapsed:.1f}s)"
