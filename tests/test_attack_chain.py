@@ -82,11 +82,12 @@ def test_json_output(tmp_path, monkeypatch):
     img = tmp_path / "test.png"
     _write_random_png(img, 64, 64)
     result = _run("attack_chain.py", str(img), "--scheme", "unknown", "--json")
-    if result.returncode == 0:
-        report = json.loads(result.stdout)
-        assert "scheme" in report
-        assert "steps_run" in report
-        assert "stealth_score" in report
+    assert result.returncode in (0, 1), f"unexpected exit {result.returncode}: {result.stderr[:200]}"
+    report = json.loads(result.stdout)
+    assert "scheme" in report
+    assert "steps_run" in report
+    assert "stealth_score" in report
+    assert "complete" in report
 
 
 def test_auto_classify_fallback(tmp_path, monkeypatch):
@@ -148,15 +149,17 @@ def test_resolve_api_key_from_env():
 def test_resolve_api_key_unreadable_file(tmp_path):
     from attack_chain import _resolve_api_key
 
+    def raise_permission_error(*_args, **_kwargs):
+        raise PermissionError("mocked unreadable")
+
     with patch.dict("os.environ", {"OPENROUTER_API_KEY": ""}, clear=False), \
          patch("attack_chain.Path.home", return_value=tmp_path):
-            env_file = tmp_path / ".claude" / "openrouter.env"
-            env_file.parent.mkdir(parents=True, exist_ok=True)
-            env_file.write_text("OPENROUTER_API_KEY=file-key")
-            env_file.chmod(0o000)
+        env_file = tmp_path / ".claude" / "openrouter.env"
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        env_file.write_text("OPENROUTER_API_KEY=file-key")
+        with patch.object(type(env_file), "read_text", raise_permission_error):
             key = _resolve_api_key(None)
-            env_file.chmod(0o644)
-            assert key in ("", "file-key")
+        assert key == ""
 
 
 def test_api_key_not_in_process_args(tmp_path):

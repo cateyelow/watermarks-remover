@@ -220,14 +220,14 @@ def main() -> int:
     p.add_argument(
         "--flux3-resolution",
         choices=["768", "1k", "1.5k", "2k", "4k"],
-        default="1k",
-        help="FLUX 3 output resolution (default: 1k)",
+        default=None,
+        help="FLUX 3 output resolution (default: auto from input size for chain, 1k for direct)",
     )
     p.add_argument(
         "--flux3-strength",
         choices=["minimal", "normal", "strong", "maximum"],
-        default="normal",
-        help="FLUX 3 prompt strategy, from minimal to maximum redraw (default: normal)",
+        default=None,
+        help="FLUX 3 prompt strength (default: per-scheme for chain, normal for direct)",
     )
     p.add_argument(
         "--flux3-max-cost",
@@ -330,15 +330,20 @@ def main() -> int:
             chain_result = run_chain(
                 dest, scheme, output_path=dest,
                 api_key=args.flux3_api_key, max_cost=args.flux3_max_cost,
+                flux3_resolution=args.flux3_resolution,
+                flux3_strength=args.flux3_strength,
             )
             result["pixel_removal"] = {
                 "available": True,
+                "complete": chain_result.complete,
                 "engine": "chain",
                 "scheme": scheme,
                 "steps_run": chain_result.steps_run,
                 "stealth_score": chain_result.stealth_score,
                 "elapsed_s": round(chain_result.elapsed_s, 2),
             }
+            if not chain_result.complete:
+                eprint(f"chain incomplete: {chain_result.steps_run}/{chain_result.steps_total} steps")
         else:
             eprint(f"no watermark detected (scheme={scheme}), skipping chain")
     elif pre_classify_result is not None:
@@ -372,7 +377,8 @@ def main() -> int:
 
     pr = result.get("pixel_removal")
     residual = result["still_has_c2pa"] or result["still_has_ai_metadata"]
-    failed = residual or (pr is not None and not pr.get("available"))
+    incomplete = pr is not None and not pr.get("complete", True)
+    failed = residual or (pr is not None and not pr.get("available")) or incomplete
 
     if args.json:
         print(json.dumps(result, indent=2))

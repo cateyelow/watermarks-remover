@@ -24,7 +24,13 @@ from typing import Any, NamedTuple
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from common import cleaned_path, emit_json, eprint, subprocess_creationflags  # noqa: E402
+from common import (  # noqa: E402
+    cleaned_path,
+    emit_json,
+    eprint,
+    safe_write_bytes,
+    subprocess_creationflags,
+)
 
 _FLUX3_ENGINES = frozenset({"clean_flux3.py"})
 _FLUX3_TIERS = [(768, "768"), (1024, "1k"), (1536, "1.5k"), (2048, "2k"), (4096, "4k")]
@@ -186,23 +192,29 @@ def run_chain(
     stealth_threshold: float = 0.7,
     api_key: str | None = None,
     max_cost: float | None = None,
+    flux3_resolution: str | None = None,
+    flux3_strength: str | None = None,
 ) -> ChainResult:
     if scheme not in VALID_SCHEMES:
         raise ValueError(f"unknown scheme: {scheme}; valid: {sorted(VALID_SCHEMES)}")
 
     chain = ATTACK_CHAINS[scheme]
-    resolved_key = _resolve_api_key(api_key) if any(
-        s["engine"] in _FLUX3_ENGINES for s in chain
-    ) else ""
+    has_flux3 = any(s["engine"] in _FLUX3_ENGINES for s in chain)
+    resolved_key = _resolve_api_key(api_key) if has_flux3 else ""
     t0 = time.monotonic()
     current = image_path
     steps_run = 0
     flux3_failed = False
+    pillow_available = True
     original_size: tuple[int, int] | None = None
     try:
         from PIL import Image as _Img
         with _Img.open(image_path) as _im:
             original_size = _im.size
+    except ImportError:
+        pillow_available = False
+        if has_flux3:
+            eprint("Pillow not installed; skipping Flux3 (cannot guarantee dimension match)")
     except Exception as exc:
         eprint(f"could not read input size for post-chain resize: {exc}")
 
@@ -211,75 +223,92 @@ def run_chain(
 
     work_dir = Path(tempfile.mkdtemp(prefix="chain_"))
 
-    for i, step in enumerate(chain):
-        script = step["engine"]
-        if not (SCRIPTS_DIR / script).is_file():
-            eprint(f"skipping {script}: not installed")
-            if script in _FLUX3_ENGINES:
+    try:
+        for i, step in enumerate(chain):
+            script = step["engine"]
+            if not (SCRIPTS_DIR / script).is_file():
+                eprint(f"skipping {script}: not installed")
+                if script in _FLUX3_ENGINES:
+                    flux3_failed = True
+                continue
+            if script in _FLUX3_ENGINES and not pillow_available:
+                eprint(f"skipping {script}: Pillow needed for post-Flux3 resize")
                 flux3_failed = True
-            continue
+                continue
 
-        step_out = output_path if (i == len(chain) - 1 and output_path) else None
-        if step_out is None:
-            step_out = work_dir / f"{image_path.stem}.step{i}{image_path.suffix}"
+            step_out = output_path if (i == len(chain) - 1 and output_path) else None
+            if step_out is None:
+                step_out = work_dir / f"{image_path.stem}.step{i}{image_path.suffix}"
 
-        try:
-            result = _run_engine(
-                script, current, step_out, step["args"], device, timeout,
-                api_key=resolved_key, input_size=original_size, max_cost=max_cost,
-            )
-        except subprocess.TimeoutExpired:
-            eprint(f"{script} timed out after {timeout}s")
+            step_args = list(step["args"])
             if script in _FLUX3_ENGINES:
-                flux3_failed = True
-            break
+                if flux3_strength and "--strength" in step_args:
+                    idx = step_args.index("--strength")
+                    step_args[idx + 1] = flux3_strength
+                if flux3_resolution:
+                    step_args.extend(["--resolution", flux3_resolution])
 
-        if result.returncode == 0 and step_out.is_file():
-            current = step_out
-            steps_run += 1
-        elif result.returncode == 3:
-            eprint(f"{script} unavailable (exit 3), skipping")
-            if script in _FLUX3_ENGINES:
-                flux3_failed = True
-            continue
-        else:
-            eprint(f"{script} failed (exit {result.returncode}): {result.stderr[:200]}")
-            if script in _FLUX3_ENGINES:
-                flux3_failed = True
-            continue
-
-        remaining_has_flux3 = any(
-            s["engine"] in _FLUX3_ENGINES for s in chain[i + 1 :]
-        )
-        if not remaining_has_flux3:
-            stealth = _run_forensic(current)
-            if stealth < stealth_threshold:
+            try:
+                result = _run_engine(
+                    script, current, step_out, step_args, device, timeout,
+                    api_key=resolved_key, input_size=original_size, max_cost=max_cost,
+                )
+            except subprocess.TimeoutExpired:
+                eprint(f"{script} timed out after {timeout}s")
+                remaining_has_flux3 = script in _FLUX3_ENGINES or any(
+                    s["engine"] in _FLUX3_ENGINES for s in chain[i + 1 :]
+                )
+                if remaining_has_flux3:
+                    flux3_failed = True
                 break
 
-    if output_path and current != output_path:
-        shutil.copy2(str(current), str(output_path))
-        current = output_path
-    elif not output_path and work_dir in Path(current).parents:
-        fallback = image_path.parent / f"{image_path.stem}.chain{image_path.suffix}"
-        shutil.copy2(str(current), str(fallback))
-        current = fallback
+            if result.returncode == 0 and step_out.is_file():
+                current = step_out
+                steps_run += 1
+            elif result.returncode == 3:
+                eprint(f"{script} unavailable (exit 3), skipping")
+                if script in _FLUX3_ENGINES:
+                    flux3_failed = True
+                continue
+            else:
+                eprint(f"{script} failed (exit {result.returncode}): {result.stderr[:200]}")
+                if script in _FLUX3_ENGINES:
+                    flux3_failed = True
+                continue
 
-    if original_size is not None:
-        try:
-            import io
+            remaining_has_flux3 = any(
+                s["engine"] in _FLUX3_ENGINES for s in chain[i + 1 :]
+            )
+            if not remaining_has_flux3:
+                stealth = _run_forensic(current)
+                if stealth < stealth_threshold:
+                    break
 
-            from PIL import Image as _Img
-            with _Img.open(current) as out_im:
-                if out_im.size != original_size:
-                    resized = out_im.resize(original_size, _Img.Resampling.LANCZOS)
-                    buf = io.BytesIO()
-                    resized.save(buf, format=out_im.format or "PNG", quality=95)
-                    Path(current).write_bytes(buf.getvalue())
-                    eprint(f"resized {out_im.size} -> {original_size} to match input")
-        except Exception as exc:
-            eprint(f"resize failed, keeping Flux3 output size: {exc}")
+        if output_path and current != output_path:
+            shutil.copy2(str(current), str(output_path))
+            current = output_path
+        elif not output_path and work_dir in Path(current).parents:
+            fallback = image_path.parent / f"{image_path.stem}.chain{image_path.suffix}"
+            shutil.copy2(str(current), str(fallback))
+            current = fallback
 
-    shutil.rmtree(work_dir, ignore_errors=True)
+        if original_size is not None:
+            try:
+                import io
+
+                from PIL import Image as _Img
+                with _Img.open(current) as out_im:
+                    if out_im.size != original_size:
+                        resized = out_im.resize(original_size, _Img.Resampling.LANCZOS)
+                        buf = io.BytesIO()
+                        resized.save(buf, format=out_im.format or "PNG", quality=95)
+                        safe_write_bytes(current, buf.getvalue())
+                        eprint(f"resized {out_im.size} -> {original_size} to match input")
+            except Exception as exc:
+                eprint(f"resize failed: {exc}")
+                flux3_failed = True
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
     final_stealth = _run_forensic(current)
     elapsed = time.monotonic() - t0
@@ -324,6 +353,18 @@ def main() -> int:
         default=None,
         help="Per-image cost limit for FLUX 3 in USD (default: clean_flux3.py default)",
     )
+    p.add_argument(
+        "--flux3-resolution",
+        choices=["768", "1k", "1.5k", "2k", "4k"],
+        default=None,
+        help="Override FLUX 3 resolution tier (default: auto from input size)",
+    )
+    p.add_argument(
+        "--flux3-strength",
+        choices=["minimal", "normal", "strong", "maximum"],
+        default=None,
+        help="Override FLUX 3 prompt strength (default: per-scheme chain definition)",
+    )
     p.add_argument("--json", action="store_true", help="Emit JSON on stdout")
     args = p.parse_args()
 
@@ -367,6 +408,8 @@ def main() -> int:
             stealth_threshold=args.stealth_threshold,
             api_key=args.flux3_api_key,
             max_cost=args.flux3_max_cost,
+            flux3_resolution=args.flux3_resolution,
+            flux3_strength=args.flux3_strength,
         )
     except ValueError as e:
         eprint(str(e))

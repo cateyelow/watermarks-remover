@@ -2400,8 +2400,8 @@ def clean_image(
     nfpa_device: str | None = None,
     nfpa_timeout: int = 3600,
     flux3_api_key: str | None = None,
-    flux3_resolution: str = "1k",
-    flux3_strength: str = "normal",
+    flux3_resolution: str | None = None,
+    flux3_strength: str | None = None,
     flux3_max_cost: float = 0.50,
     flux3_provider: str = "openrouter",
     flux3_timeout: int = 600,
@@ -2521,19 +2521,21 @@ def clean_image(
                     f"NFPA pixel removal skipped: {pixel_removal.get('error', 'unknown error')}"
                 )
         elif remove_pixel == "flux3":
+            eff_resolution = flux3_resolution or "1k"
+            eff_strength = flux3_strength or "normal"
             pixel_removal = run_flux3_clean(
                 dest,
                 dest,
                 api_key=flux3_api_key,
-                resolution=flux3_resolution,
-                strength=flux3_strength,
+                resolution=eff_resolution,
+                strength=eff_strength,
                 max_cost=flux3_max_cost,
                 provider=flux3_provider,
                 timeout=flux3_timeout,
             )
             if pixel_removal.get("available"):
                 actions.append(
-                    f"FLUX 3 regeneration (strength {flux3_strength}, resolution {flux3_resolution})"
+                    f"FLUX 3 regeneration (strength {eff_strength}, resolution {eff_resolution})"
                 )
             else:
                 actions.append(
@@ -2555,6 +2557,10 @@ def clean_image(
             chain_args = []
             if flux3_max_cost is not None:
                 chain_args.extend(["--flux3-max-cost", str(flux3_max_cost)])
+            if flux3_resolution is not None:
+                chain_args.extend(["--flux3-resolution", flux3_resolution])
+            if flux3_strength is not None:
+                chain_args.extend(["--flux3-strength", flux3_strength])
             chain_env = {}
             if flux3_api_key:
                 chain_env["OPENROUTER_API_KEY"] = flux3_api_key
