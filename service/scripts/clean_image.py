@@ -13,6 +13,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import backup_path, cleaned_path, eprint
 from image_meta import clean_image
 
+ENGINE_NAMES = {
+    "ctrlregen": "CtrlRegen",
+    "diffusion": "DiffusionPurification",
+    "marknull": "MarkNull",
+    "nfpa": "NFPA",
+    "flux3": "FLUX 3",
+}
+
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
@@ -38,15 +46,23 @@ def main() -> int:
     p.add_argument(
         "--remove-pixel",
         choices=[
-            "ctrlregen", "diffusion", "marknull", "nfpa",
-            "fmdiffwa", "synthid_bypass", "treering", "chain",
+            "ctrlregen",
+            "diffusion",
+            "marknull",
+            "nfpa",
+            "fmdiffwa",
+            "synthid_bypass",
+            "treering",
+            "chain",
+            "flux3",
         ],
         default=None,
         help="Run optional pixel-watermark removal after metadata cleaning "
         "(ctrlregen = CtrlRegen regeneration; diffusion = MarkDiffusion; "
         "marknull = MarkNull NLAS; nfpa = NFPA next-frame; "
         "fmdiffwa = frequency-domain Wiener; synthid_bypass = SynthID bypass; "
-        "treering = Tree-Ring notch filter; chain = auto-classify and sequence)",
+        "treering = Tree-Ring notch filter; chain = auto-classify and sequence; "
+        "flux3 = FLUX 3 API regeneration, needs an OpenRouter key)",
     )
     p.add_argument(
         "--ctrlregen-dir",
@@ -126,6 +142,91 @@ def main() -> int:
         default=3600,
         help="Purification subprocess timeout in seconds (default: 3600)",
     )
+    p.add_argument(
+        "--marknull-mode",
+        choices=["optimize", "fast"],
+        default="optimize",
+        help="MarkNull mode: optimize = NLAS gradient descent, fast = one VAE round-trip "
+        "(default: optimize)",
+    )
+    p.add_argument(
+        "--marknull-iterations",
+        type=int,
+        default=100,
+        help="MarkNull optimisation iterations (default: 100)",
+    )
+    p.add_argument(
+        "--marknull-device",
+        type=str,
+        default=None,
+        help="MarkNull device: auto|cpu|cuda|mps (default: auto)",
+    )
+    p.add_argument(
+        "--marknull-timeout",
+        type=int,
+        default=3600,
+        help="MarkNull subprocess timeout in seconds (default: 3600)",
+    )
+    p.add_argument(
+        "--nfpa-flow-strength",
+        type=float,
+        default=0.05,
+        help="NFPA flow field strength in (0, 1] (default: 0.05)",
+    )
+    p.add_argument(
+        "--nfpa-steps",
+        type=int,
+        default=50,
+        help="NFPA DDIM steps per pass (default: 50)",
+    )
+    p.add_argument(
+        "--nfpa-device",
+        type=str,
+        default=None,
+        help="NFPA device: auto|cpu|cuda|mps (default: auto)",
+    )
+    p.add_argument(
+        "--nfpa-timeout",
+        type=int,
+        default=3600,
+        help="NFPA subprocess timeout in seconds (default: 3600)",
+    )
+    p.add_argument(
+        "--flux3-api-key",
+        type=str,
+        default=None,
+        help="OpenRouter API key for FLUX 3 (default: $OPENROUTER_API_KEY)",
+    )
+    p.add_argument(
+        "--flux3-resolution",
+        choices=["768", "1k", "1.5k", "2k", "4k"],
+        default="1k",
+        help="FLUX 3 output resolution (default: 1k)",
+    )
+    p.add_argument(
+        "--flux3-strength",
+        choices=["minimal", "normal", "strong", "maximum"],
+        default="normal",
+        help="FLUX 3 prompt strategy, from minimal to maximum redraw (default: normal)",
+    )
+    p.add_argument(
+        "--flux3-max-cost",
+        type=float,
+        default=0.50,
+        help="Refuse FLUX 3 when the estimated cost in USD exceeds this (default: 0.50)",
+    )
+    p.add_argument(
+        "--flux3-provider",
+        choices=["openrouter", "bfl", "fal"],
+        default="openrouter",
+        help="FLUX 3 provider; only openrouter is implemented so far (default: openrouter)",
+    )
+    p.add_argument(
+        "--flux3-timeout",
+        type=int,
+        default=600,
+        help="FLUX 3 subprocess timeout in seconds (default: 600)",
+    )
     args = p.parse_args()
 
     if not args.path.is_file():
@@ -164,6 +265,20 @@ def main() -> int:
             markdiffusion_steps=args.markdiffusion_steps,
             markdiffusion_device=args.markdiffusion_device,
             markdiffusion_timeout=args.markdiffusion_timeout,
+            marknull_mode=args.marknull_mode,
+            marknull_iterations=args.marknull_iterations,
+            marknull_device=args.marknull_device,
+            marknull_timeout=args.marknull_timeout,
+            nfpa_flow_strength=args.nfpa_flow_strength,
+            nfpa_steps=args.nfpa_steps,
+            nfpa_device=args.nfpa_device,
+            nfpa_timeout=args.nfpa_timeout,
+            flux3_api_key=args.flux3_api_key,
+            flux3_resolution=args.flux3_resolution,
+            flux3_strength=args.flux3_strength,
+            flux3_max_cost=args.flux3_max_cost,
+            flux3_provider=args.flux3_provider,
+            flux3_timeout=args.flux3_timeout,
         )
     except Exception as e:
         eprint(f"error: {e}")
@@ -194,15 +309,11 @@ def main() -> int:
                 f"(watermarked: {label})"
             )
         if pr is not None:
+            engine = ENGINE_NAMES.get(args.remove_pixel, args.remove_pixel)
             if pr.get("available"):
-                engine = (
-                    "CtrlRegen" if args.remove_pixel == "ctrlregen" else "DiffusionPurification"
-                )
-                eprint(f"{engine}: removed on {pr.get('device', 'unknown device')}")
+                where = pr.get("device") or pr.get("provider") or "unknown device"
+                eprint(f"{engine}: removed on {where}")
             else:
-                engine = (
-                    "CtrlRegen" if args.remove_pixel == "ctrlregen" else "DiffusionPurification"
-                )
                 eprint(f"{engine}: unavailable: {pr.get('error', 'unknown error')}")
         if residual:
             eprint("warning: residual C2PA/AI signals may remain")

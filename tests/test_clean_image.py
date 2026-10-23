@@ -294,3 +294,108 @@ def test_webp_size_mismatch_is_not_rewritten():
         assert "size mismatch" in str(error)
     else:
         raise AssertionError("WebP with a size mismatch should not be rewritten")
+
+
+def _isolate_flux3_env(monkeypatch) -> None:
+    """Keep a real API key, mock switch or SynthID scorer in the shell out of these runs."""
+    for name in (
+        "OPENROUTER_API_KEY",
+        "FLUX3_TEST_MOCK",
+        "FLUX3_TEST_MOCK_BYTES",
+        "REVERSE_SYNTHID_DIR",
+        "WATERMARKS_SYNTHID_SCORER_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_remove_pixel_marknull_option(tmp_path: Path):
+    img = tmp_path / "test.png"
+    img.write_bytes(JPEG_1X1)
+    result = _run(
+        "clean_image.py",
+        str(img),
+        "--remove-pixel",
+        "marknull",
+        "--marknull-mode",
+        "fast",
+        "--marknull-iterations",
+        "1",
+        "--marknull-device",
+        "cpu",
+        "--json",
+    )
+    assert result.returncode in (0, 1)  # 0 if torch available, 1 if not
+    report = json.loads(result.stdout)
+    assert "pixel_removal" in report
+    pr = report["pixel_removal"]
+    assert pr["available"] is (result.returncode == 0)
+    # The engine CLI accepted the forwarded flags; any failure is the backend itself.
+    assert "usage:" not in pr.get("error", "")
+
+
+def test_remove_pixel_nfpa_option(tmp_path: Path):
+    img = tmp_path / "test.png"
+    img.write_bytes(JPEG_1X1)
+    result = _run(
+        "clean_image.py",
+        str(img),
+        "--remove-pixel",
+        "nfpa",
+        "--nfpa-flow-strength",
+        "0.1",
+        "--nfpa-steps",
+        "1",
+        "--nfpa-device",
+        "cpu",
+        "--json",
+    )
+    assert result.returncode in (0, 1)
+    report = json.loads(result.stdout)
+    assert "pixel_removal" in report
+    pr = report["pixel_removal"]
+    assert pr["available"] is (result.returncode == 0)
+    assert "usage:" not in pr.get("error", "")
+
+
+def test_remove_pixel_flux3_option(tmp_path: Path, monkeypatch):
+    _isolate_flux3_env(monkeypatch)
+    img = tmp_path / "test.png"
+    img.write_bytes(JPEG_1X1)
+    result = _run("clean_image.py", str(img), "--remove-pixel", "flux3", "--json")
+    assert result.returncode == 1  # no API key
+    report = json.loads(result.stdout)
+    assert "pixel_removal" in report
+    assert report["pixel_removal"]["available"] is False
+    assert "OPENROUTER_API_KEY" in report["pixel_removal"]["error"]
+
+
+def test_remove_pixel_flux3_passes_settings_through(tmp_path: Path, monkeypatch):
+    _isolate_flux3_env(monkeypatch)
+    monkeypatch.setenv("FLUX3_TEST_MOCK", "1")
+    img = tmp_path / "test.png"
+    img.write_bytes(JPEG_1X1)
+    result = _run(
+        "clean_image.py",
+        str(img),
+        "--remove-pixel",
+        "flux3",
+        "--flux3-api-key",
+        "test-key",
+        "--flux3-resolution",
+        "768",
+        "--flux3-strength",
+        "minimal",
+        "--flux3-max-cost",
+        "0.1",
+        "--flux3-provider",
+        "openrouter",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    pr = json.loads(result.stdout)["pixel_removal"]
+    assert pr["available"] is True
+    assert pr["mock"] is True
+    assert pr["resolution"] == "768"
+    assert pr["strength"] == "minimal"
+    assert pr["max_cost_usd"] == 0.1
+    assert pr["provider"] == "openrouter"
