@@ -64,7 +64,9 @@ def compute_radial_power(image: np.ndarray) -> np.ndarray:
 
 
 def detect_ring_pattern(
-    image: np.ndarray, min_radius: int = 8, max_radius: int = 40,
+    image: np.ndarray,
+    min_radius: int = 8,
+    max_radius: int = 40,
 ) -> dict:
     """Detect Tree-Ring watermark pattern in the frequency domain."""
     radial = compute_radial_power(image)
@@ -97,7 +99,9 @@ def detect_ring_pattern(
 
 
 def notch_filter_attack(
-    image: np.ndarray, detected_radii: list[int] | None = None, width: int = 3,
+    image: np.ndarray,
+    detected_radii: list[int] | None = None,
+    width: int = 3,
 ) -> np.ndarray:
     """Remove ring patterns via frequency-domain notch filtering."""
     if detected_radii is None:
@@ -158,7 +162,7 @@ def pgd_attack(
         cy, cx = h // 2, w_t // 2
         y = t.arange(-cy, h - cy, dtype=t.float32).unsqueeze(1)
         x_coord = t.arange(-cx, w_t - cx, dtype=t.float32).unsqueeze(0)
-        dist = t.sqrt(y ** 2 + x_coord ** 2)
+        dist = t.sqrt(y**2 + x_coord**2)
 
         ring_mask = ((dist >= 8) & (dist <= 40)).float()
         ring_energy = (mag * ring_mask).sum()
@@ -179,7 +183,7 @@ def compute_psnr(original: np.ndarray, modified: np.ndarray) -> float:
     mse = np.mean((original.astype(np.float64) - modified.astype(np.float64)) ** 2)
     if mse < 1e-10:
         return 100.0
-    return float(10 * np.log10(255.0 ** 2 / mse))
+    return float(10 * np.log10(255.0**2 / mse))
 
 
 class TreeRingAttacker:

@@ -64,14 +64,16 @@ def main() -> int:
         return 1
 
     if args.json:
-        emit_json({
-            "output": result.output_path,
-            "ring_energy_before": result.ring_energy_before,
-            "ring_energy_after": result.ring_energy_after,
-            "psnr": result.psnr,
-            "iterations_used": result.iterations_used,
-            "mode": args.mode,
-        })
+        emit_json(
+            {
+                "output": result.output_path,
+                "ring_energy_before": result.ring_energy_before,
+                "ring_energy_after": result.ring_energy_after,
+                "psnr": result.psnr,
+                "iterations_used": result.iterations_used,
+                "mode": args.mode,
+            }
+        )
     else:
         eprint(
             f"treering({args.mode}): ring_energy {result.ring_energy_before:.1f} -> "
