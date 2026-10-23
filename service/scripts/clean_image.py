@@ -327,7 +327,10 @@ def main() -> int:
         skip_chain = scheme == "none" or (is_auto and scheme == "unknown")
         if not skip_chain:
             eprint(f"classified as {scheme} (confidence {cr.confidence:.2f}), running chain")
-            chain_result = run_chain(dest, scheme, output_path=dest)
+            chain_result = run_chain(
+                dest, scheme, output_path=dest,
+                api_key=args.flux3_api_key, max_cost=args.flux3_max_cost,
+            )
             result["pixel_removal"] = {
                 "available": True,
                 "engine": "chain",

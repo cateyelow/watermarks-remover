@@ -111,6 +111,7 @@ class ChainResult(NamedTuple):
     stealth_score: float
     elapsed_s: float
     output_path: str
+    complete: bool = True
 
 
 def _run_engine(
@@ -122,6 +123,7 @@ def _run_engine(
     timeout: int,
     api_key: str = "",
     input_size: tuple[int, int] | None = None,
+    max_cost: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [
         sys.executable,
@@ -133,8 +135,11 @@ def _run_engine(
     ]
     if device and script not in _FLUX3_ENGINES:
         cmd.extend(["--device", device])
-    if script in _FLUX3_ENGINES and input_size and "--resolution" not in extra_args:
-        cmd.extend(["--resolution", _pick_flux3_resolution(*input_size)])
+    if script in _FLUX3_ENGINES:
+        if input_size and "--resolution" not in extra_args:
+            cmd.extend(["--resolution", _pick_flux3_resolution(*input_size)])
+        if max_cost is not None and "--max-cost" not in extra_args:
+            cmd.extend(["--max-cost", str(max_cost)])
     cmd.extend(extra_args)
     env = None
     if script in _FLUX3_ENGINES and api_key:
@@ -180,6 +185,7 @@ def run_chain(
     timeout: int = 600,
     stealth_threshold: float = 0.7,
     api_key: str | None = None,
+    max_cost: float | None = None,
 ) -> ChainResult:
     if scheme not in VALID_SCHEMES:
         raise ValueError(f"unknown scheme: {scheme}; valid: {sorted(VALID_SCHEMES)}")
@@ -191,6 +197,7 @@ def run_chain(
     t0 = time.monotonic()
     current = image_path
     steps_run = 0
+    flux3_failed = False
     original_size: tuple[int, int] | None = None
     try:
         from PIL import Image as _Img
@@ -199,23 +206,32 @@ def run_chain(
     except Exception as exc:
         eprint(f"could not read input size for post-chain resize: {exc}")
 
+    import shutil
+    import tempfile
+
+    work_dir = Path(tempfile.mkdtemp(prefix="chain_"))
+
     for i, step in enumerate(chain):
         script = step["engine"]
         if not (SCRIPTS_DIR / script).is_file():
             eprint(f"skipping {script}: not installed")
+            if script in _FLUX3_ENGINES:
+                flux3_failed = True
             continue
 
         step_out = output_path if (i == len(chain) - 1 and output_path) else None
         if step_out is None:
-            step_out = current.parent / f"{current.stem}.step{i}{current.suffix}"
+            step_out = work_dir / f"{image_path.stem}.step{i}{image_path.suffix}"
 
         try:
             result = _run_engine(
                 script, current, step_out, step["args"], device, timeout,
-                api_key=resolved_key, input_size=original_size,
+                api_key=resolved_key, input_size=original_size, max_cost=max_cost,
             )
         except subprocess.TimeoutExpired:
             eprint(f"{script} timed out after {timeout}s")
+            if script in _FLUX3_ENGINES:
+                flux3_failed = True
             break
 
         if result.returncode == 0 and step_out.is_file():
@@ -223,9 +239,13 @@ def run_chain(
             steps_run += 1
         elif result.returncode == 3:
             eprint(f"{script} unavailable (exit 3), skipping")
+            if script in _FLUX3_ENGINES:
+                flux3_failed = True
             continue
         else:
             eprint(f"{script} failed (exit {result.returncode}): {result.stderr[:200]}")
+            if script in _FLUX3_ENGINES:
+                flux3_failed = True
             continue
 
         remaining_has_flux3 = any(
@@ -237,10 +257,12 @@ def run_chain(
                 break
 
     if output_path and current != output_path:
-        import shutil
-
         shutil.copy2(str(current), str(output_path))
         current = output_path
+    elif not output_path and work_dir in Path(current).parents:
+        fallback = image_path.parent / f"{image_path.stem}.chain{image_path.suffix}"
+        shutil.copy2(str(current), str(fallback))
+        current = fallback
 
     if original_size is not None:
         try:
@@ -257,6 +279,8 @@ def run_chain(
         except Exception as exc:
             eprint(f"resize failed, keeping Flux3 output size: {exc}")
 
+    shutil.rmtree(work_dir, ignore_errors=True)
+
     final_stealth = _run_forensic(current)
     elapsed = time.monotonic() - t0
 
@@ -267,6 +291,7 @@ def run_chain(
         stealth_score=final_stealth,
         elapsed_s=round(elapsed, 2),
         output_path=str(current),
+        complete=not flux3_failed and steps_run > 0,
     )
 
 
@@ -292,6 +317,12 @@ def main() -> int:
         "--flux3-api-key",
         default=None,
         help="OpenRouter API key for FLUX 3 steps (default: $OPENROUTER_API_KEY or ~/.claude/openrouter.env)",
+    )
+    p.add_argument(
+        "--flux3-max-cost",
+        type=float,
+        default=None,
+        help="Per-image cost limit for FLUX 3 in USD (default: clean_flux3.py default)",
     )
     p.add_argument("--json", action="store_true", help="Emit JSON on stdout")
     args = p.parse_args()
@@ -335,6 +366,7 @@ def main() -> int:
             timeout=args.timeout,
             stealth_threshold=args.stealth_threshold,
             api_key=args.flux3_api_key,
+            max_cost=args.flux3_max_cost,
         )
     except ValueError as e:
         eprint(str(e))
@@ -352,14 +384,16 @@ def main() -> int:
                 "stealth_score": result.stealth_score,
                 "elapsed_s": result.elapsed_s,
                 "output": result.output_path,
+                "complete": result.complete,
             }
         )
     else:
+        status = "complete" if result.complete else "INCOMPLETE"
         eprint(
             f"chain({result.scheme}): {result.steps_run}/{result.steps_total} steps, "
-            f"stealth={result.stealth_score:.3f}, {result.elapsed_s:.1f}s"
+            f"stealth={result.stealth_score:.3f}, {result.elapsed_s:.1f}s [{status}]"
         )
-    return 0
+    return 0 if result.complete else 1
 
 
 if __name__ == "__main__":

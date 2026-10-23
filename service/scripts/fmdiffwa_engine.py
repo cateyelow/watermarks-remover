@@ -47,7 +47,7 @@ def _axis_starts(size: int, patch: int, min_overlap: int | None = None) -> list[
     if size <= patch:
         return [0]
     if min_overlap is None:
-        min_overlap = max(32, -(-patch // 4))  # ceil(patch/4)
+        min_overlap = -(-patch // 4)  # ceil(patch/4), proportional
     min_overlap = min(min_overlap, patch - 1)
     step = patch - min_overlap
     count = max(2, math.ceil((size - min_overlap) / step))

@@ -2359,6 +2359,7 @@ def _run_engine_script(
     output: Path,
     extra_args: list[str] | None = None,
     timeout: int = 600,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one of the new removal engine scripts as a subprocess."""
     script = SCRIPTS_DIR / script_name
@@ -2367,7 +2368,7 @@ def _run_engine_script(
     cmd = [sys.executable, str(script), str(path), "-o", str(output), "--json"]
     if extra_args:
         cmd.extend(extra_args)
-    return _run_json_engine(cmd, script_name, timeout)
+    return _run_json_engine(cmd, script_name, timeout, env=env)
 
 
 def clean_image(
@@ -2551,7 +2552,16 @@ def clean_image(
             label = "TreeRing" if pixel_removal.get("available") else "TreeRing skipped"
             actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
         elif remove_pixel == "chain":
-            pixel_removal = _run_engine_script("attack_chain.py", dest, dest)
+            chain_args = []
+            if flux3_max_cost is not None:
+                chain_args.extend(["--flux3-max-cost", str(flux3_max_cost)])
+            chain_env = {}
+            if flux3_api_key:
+                chain_env["OPENROUTER_API_KEY"] = flux3_api_key
+            pixel_removal = _run_engine_script(
+                "attack_chain.py", dest, dest, extra_args=chain_args or None,
+                timeout=flux3_timeout, env=chain_env or None,
+            )
             label = "AttackChain" if pixel_removal.get("available") else "AttackChain skipped"
             actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
         else:
