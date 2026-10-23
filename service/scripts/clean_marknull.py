@@ -115,16 +115,18 @@ def main() -> int:
     safe_write_bytes(output, data)
 
     if args.json:
-        emit_json({
-            "output": str(output),
-            "mode": args.mode,
-            "iterations": args.iterations,
-            "device": engine._device,
-            "model_id": model_id,
-            "bytes_in": bytes_in,
-            "bytes_out": len(data),
-            "elapsed_s": round(elapsed, 2),
-        })
+        emit_json(
+            {
+                "output": str(output),
+                "mode": args.mode,
+                "iterations": args.iterations,
+                "device": engine._device,
+                "model_id": model_id,
+                "bytes_in": bytes_in,
+                "bytes_out": len(data),
+                "elapsed_s": round(elapsed, 2),
+            }
+        )
     else:
         eprint(f"wrote {output} ({len(data)} bytes, {elapsed:.1f}s)")
     return 0
