@@ -108,9 +108,10 @@ The benchmark expects this directory layout:
 The [WAVES project](https://github.com/umd-huang-lab/WAVES) does not
 distribute a pre-built image dataset.  Its repository contains code to
 generate watermarked images from source datasets (COCO, DiffusionDB,
-DALL-E 3) using watermark model weights (Tree-Ring, StegaStamp, Stable
-Signature).  Alternatively, create a minimal test set with synthetic
-watermarked images (numpy can generate Tree-Ring-like ring patterns).
+DALL-E 3) using watermark model weights.  To generate authentic
+Tree-Ring watermarked images, run Stable Diffusion with the Tree-Ring
+latent noise injection from the WAVES `tree_ring/optim_utils.py`
+module (requires a GPU and `diffusers`).
 
 Once the dataset directory is prepared:
 
