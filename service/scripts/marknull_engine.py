@@ -142,9 +142,9 @@ class MarkNullEngine:
         if self._vae is not None:
             return self._vae
         diffusers = _lazy_diffusers()
-        self._vae = diffusers.AutoencoderKL.from_pretrained(
-            self._model_id, subfolder="vae"
-        ).to(self._device)
+        self._vae = diffusers.AutoencoderKL.from_pretrained(self._model_id, subfolder="vae").to(
+            self._device
+        )
         self._vae.eval()
         return self._vae
 
