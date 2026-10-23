@@ -2367,26 +2367,7 @@ def _run_engine_script(
     cmd = [sys.executable, str(script), str(path), "-o", str(output), "--json"]
     if extra_args:
         cmd.extend(extra_args)
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-            creationflags=subprocess_creationflags,
-        )
-        if result.returncode == 0:
-            try:
-                report = json.loads(result.stdout)
-            except (json.JSONDecodeError, ValueError):
-                report = {}
-            return {"available": True, **report}
-        if result.returncode == 3:
-            return {"available": False, "error": f"{script_name} unavailable (exit 3)"}
-        return {"available": False, "error": f"{script_name} failed (exit {result.returncode})"}
-    except subprocess.TimeoutExpired:
-        return {"available": False, "error": f"{script_name} timed out after {timeout}s"}
+    return _run_json_engine(cmd, script_name, timeout)
 
 
 def clean_image(
