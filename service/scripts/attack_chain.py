@@ -23,7 +23,7 @@ from typing import Any, NamedTuple
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from common import cleaned_path, emit_json, eprint  # noqa: E402
+from common import cleaned_path, emit_json, eprint, subprocess_creationflags  # noqa: E402
 
 ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     "tree_ring": [
@@ -99,6 +99,7 @@ def _run_engine(
         text=True,
         check=False,
         timeout=timeout,
+        creationflags=subprocess_creationflags,
     )
 
 
@@ -109,6 +110,7 @@ def _run_forensic(image_path: Path) -> float:
         text=True,
         check=False,
         timeout=120,
+        creationflags=subprocess_creationflags,
     )
     if result.returncode == 0:
         try:
@@ -223,6 +225,7 @@ def main() -> int:
                 text=True,
                 check=False,
                 timeout=120,
+                creationflags=subprocess_creationflags,
             )
             if clf_result.returncode == 0:
                 clf_data = json.loads(clf_result.stdout)
