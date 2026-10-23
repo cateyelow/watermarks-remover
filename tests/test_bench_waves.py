@@ -21,6 +21,29 @@ def test_waves_result_has_required_metrics():
     assert r.n_images == 100
 
 
+def test_waves_result_accepts_none_lpips_fid():
+    from bench_waves import WavesResult
+
+    r = WavesResult(tpr=0.1, psnr=30.0, ssim=0.9, lpips=None, fid=None, n_images=5)
+    assert r.lpips is None
+    assert r.fid is None
+    assert r.n_images == 5
+
+
+def test_detect_watermark_fallback_classifier(tmp_path: Path):
+    """Built-in classifier returns False for a plain noise image."""
+    import numpy as np
+    from bench_waves import _detect_watermark
+    from PIL import Image
+
+    img = tmp_path / "noise.png"
+    arr = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
+    Image.fromarray(arr).save(str(img))
+
+    result = _detect_watermark(img, decoder_cmd=None)
+    assert isinstance(result, bool)
+
+
 def test_compute_psnr_identical():
     import numpy as np
     from bench_waves import compute_psnr

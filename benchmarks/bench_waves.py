@@ -59,13 +59,61 @@ def compute_ssim(original: np.ndarray, modified: np.ndarray) -> float:
     return float(num / den)
 
 
+def _detect_watermark(
+    img_path: Path,
+    decoder_cmd: list[str] | None,
+) -> bool:
+    """Return True if the image is detected as watermarked.
+
+    When *decoder_cmd* is given, it is invoked as
+    ``decoder_cmd... <img_path> --json`` and exit 0 with
+    ``{"detected": true}`` means watermarked.  Otherwise the built-in
+    heuristic classifier is used (scheme not in none/unknown = detected).
+
+    The built-in classifier is a routing heuristic, not a watermark
+    decoder.  It cannot detect real latent-space watermarks like
+    Tree-Ring.  For meaningful TPR, supply a watermark-specific decoder
+    via --decoder.
+    """
+    cmd = (
+        [*decoder_cmd, str(img_path), "--json"]
+        if decoder_cmd
+        else [
+            sys.executable,
+            str(SCRIPTS / "classify_watermark.py"),
+            str(img_path),
+            "--json",
+        ]
+    )
+    cr = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        creationflags=subprocess_creationflags,
+    )
+    if cr.returncode != 0:
+        return False
+    import json as _json
+
+    try:
+        cj = _json.loads(cr.stdout)
+        if decoder_cmd:
+            return bool(cj.get("detected", False))
+        return cj.get("scheme", "none") not in ("none", "unknown")
+    except (ValueError, TypeError):
+        return False
+
+
 class WavesAdapter:
     """Runs a removal engine against WAVES benchmark images."""
 
-    def __init__(self, waves_dir: str, output_dir: str):
+    def __init__(self, waves_dir: str, output_dir: str, decoder_cmd: list[str] | None = None):
         self._waves_dir = Path(waves_dir)
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._decoder_cmd = decoder_cmd
 
     def run_attack(
         self,
@@ -84,12 +132,16 @@ class WavesAdapter:
 
         psnrs: list[float] = []
         ssims: list[float] = []
-        still_detected = 0
+        detected_before = 0
+        detected_after = 0
         images_processed = 0
 
         for img_path in sorted(wm_dir.glob("*.png")):
             out_path = out_dir / img_path.name
             clean_path = clean_dir / img_path.name if clean_dir.is_dir() else None
+
+            if _detect_watermark(img_path, self._decoder_cmd):
+                detected_before += 1
 
             result = subprocess.run(
                 [
@@ -114,28 +166,8 @@ class WavesAdapter:
 
             images_processed += 1
 
-            cr = subprocess.run(
-                [
-                    sys.executable,
-                    str(SCRIPTS / "classify_watermark.py"),
-                    str(out_path),
-                    "--json",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=120,
-                creationflags=subprocess_creationflags,
-            )
-            if cr.returncode == 0:
-                import json as _json
-
-                try:
-                    cj = _json.loads(cr.stdout)
-                    if cj.get("scheme", "none") not in ("none", "unknown"):
-                        still_detected += 1
-                except (ValueError, TypeError):
-                    pass
+            if _detect_watermark(out_path, self._decoder_cmd):
+                detected_after += 1
 
             if clean_path and clean_path.is_file() and out_path.is_file():
                 from PIL import Image
@@ -146,9 +178,16 @@ class WavesAdapter:
                     psnrs.append(compute_psnr(orig, out))
                     ssims.append(compute_ssim(orig, out))
 
-        tpr = still_detected / images_processed if images_processed > 0 else 0.0
+        n_total = len(list(wm_dir.glob("*.png")))
+        tpr_before = detected_before / n_total if n_total > 0 else 0.0
+        tpr_after = detected_after / images_processed if images_processed > 0 else 0.0
+        eprint(
+            f"detection: before={detected_before}/{n_total} "
+            f"({tpr_before:.2f}), after={detected_after}/{images_processed} "
+            f"({tpr_after:.2f})"
+        )
         return WavesResult(
-            tpr=tpr,
+            tpr=tpr_after,
             psnr=float(np.mean(psnrs)) if psnrs else 0.0,
             ssim=float(np.mean(ssims)) if ssims else 0.0,
             lpips=None,
@@ -165,6 +204,15 @@ def main() -> int:
     p.add_argument("--intensity", type=float, default=0.5, help="Attack intensity")
     p.add_argument("--output-dir", type=Path, required=True, help="Output directory")
     p.add_argument("--dataset", type=str, default="coco", help="Dataset name")
+    p.add_argument(
+        "--decoder",
+        type=str,
+        nargs="+",
+        default=None,
+        help="External watermark decoder command (receives <img> --json, "
+        'must output {"detected": bool}); without this, the built-in '
+        "heuristic classifier is used (cannot detect latent-space watermarks)",
+    )
     p.add_argument("--json", action="store_true", help="Emit JSON on stdout")
     args = p.parse_args()
 
@@ -173,7 +221,7 @@ def main() -> int:
         return 2
 
     try:
-        adapter = WavesAdapter(str(args.waves_dir), str(args.output_dir))
+        adapter = WavesAdapter(str(args.waves_dir), str(args.output_dir), args.decoder)
         t0 = time.monotonic()
         result = adapter.run_attack(args.watermark, args.engine, args.intensity, args.dataset)
         elapsed = time.monotonic() - t0

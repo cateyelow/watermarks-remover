@@ -80,9 +80,17 @@ Evaluation scripts measure removal effectiveness (TPR: fraction of
 watermarks still detected after removal) and image quality (PSNR, SSIM).
 LPIPS and FID require torch and are reported as null when unavailable.
 
+**Important:** the built-in classifier (`classify_watermark.py`) is a
+routing heuristic based on spatial/frequency features.  It cannot detect
+real latent-space watermarks like Tree-Ring or Gaussian Shading.  For
+meaningful TPR, supply a watermark-specific decoder via `--decoder`
+(e.g., the ONNX decoders from the WAVES project).  Without `--decoder`,
+the benchmark reports both baseline TPR (before removal) and post-removal
+TPR so you can judge whether the detector is effective on your data.
+
 - **WAVES benchmark** (`benchmarks/bench_waves.py`): per-engine watermark
-  removal success rate (TPR via `classify_watermark.py`) and image quality
-  metrics (PSNR, SSIM, optional LPIPS/FID).
+  removal success rate (TPR via external decoder or built-in classifier)
+  and image quality metrics (PSNR, SSIM, optional LPIPS/FID).
 - **Forensic evaluation** (`benchmarks/bench_forensic.py`): per-engine
   forensic detectability rates.
 - **Full matrix** (`benchmarks/run_full_eval.sh`): watermark x engine x
@@ -107,10 +115,16 @@ watermarked images (numpy can generate Tree-Ring-like ring patterns).
 Once the dataset directory is prepared:
 
 ```bash
-# Single engine/watermark pair
+# Single engine/watermark pair (built-in classifier, reports baseline)
 python benchmarks/bench_waves.py \
     --waves-dir /path/to/dataset --engine chain \
     --watermark tree_ring --output-dir results/ --json
+
+# With external decoder for accurate TPR
+python benchmarks/bench_waves.py \
+    --waves-dir /path/to/dataset --engine chain \
+    --watermark tree_ring --output-dir results/ --json \
+    --decoder python /path/to/waves/scripts/decode.py
 
 # Full sweep (requires torch + CUDA for GPU engines)
 ./benchmarks/run_full_eval.sh --waves-dir /path/to/dataset --output-dir results/

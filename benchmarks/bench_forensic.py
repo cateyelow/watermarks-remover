@@ -47,7 +47,8 @@ def evaluate_engine_outputs(
     stealth_scores: list[float] = []
     detected = 0
 
-    image_files = sorted(output_dir.glob("*.png")) + sorted(output_dir.glob("*.jpg"))
+    all_files = sorted(output_dir.glob("*.png")) + sorted(output_dir.glob("*.jpg"))
+    image_files = [f for f in all_files if ".step" not in f.stem]
     if not image_files:
         return ForensicEvalResult(
             engine=engine,
