@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
 sys.path.insert(0, str(BENCHMARKS))
 
-from decode_treering import circle_mask, generate_key_pattern
+from decode_treering import _score_ring_region, circle_mask, generate_key_pattern
 
 SCRIPTS = ROOT / "service" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -90,6 +90,25 @@ class TestPhaseCoherence:
         assert coherence < 0.1
 
 
+class TestScoreRingRegion:
+    def test_identical_fft_gives_low_l1_high_coherence(self):
+        rng = np.random.RandomState(7)
+        fft = rng.randn(1, 4, 16, 16) + 1j * rng.randn(1, 4, 16, 16)
+        mask = circle_mask(16, 3)[:16, :16]
+        l1, coh = _score_ring_region(fft, fft, mask)
+        assert l1 < 1e-6
+        assert coh > 0.99
+
+    def test_random_fft_gives_high_l1_low_coherence(self):
+        rng = np.random.RandomState(7)
+        a = rng.randn(1, 4, 16, 16) + 1j * rng.randn(1, 4, 16, 16)
+        b = rng.randn(1, 4, 16, 16) + 1j * rng.randn(1, 4, 16, 16)
+        mask = circle_mask(16, 3)[:16, :16]
+        l1, coh = _score_ring_region(a, b, mask)
+        assert l1 > 0.5
+        assert coh < 0.3
+
+
 class TestCLI:
     def test_missing_file_returns_exit2(self, tmp_path: Path):
         result = subprocess.run(
@@ -123,12 +142,13 @@ class TestCLI:
             timeout=120,
             creationflags=subprocess_creationflags,
         )
-        if result.returncode == 1:
-            out = json.loads(result.stdout)
-            assert "detected" in out
-        elif result.returncode == 0:
-            out = json.loads(result.stdout)
-            assert "detected" in out
-            assert "score" in out
-            assert isinstance(out["detected"], bool)
-            assert isinstance(out["score"], float)
+        assert result.returncode in (0, 1), (
+            f"unexpected returncode {result.returncode}: {result.stderr}"
+        )
+        out = json.loads(result.stdout)
+        assert "detected" in out
+        assert isinstance(out["detected"], bool)
+        if result.returncode == 0:
+            for key in ("score", "l1_dist", "phase_coherence"):
+                assert key in out, f"missing key {key}"
+                assert isinstance(out[key], (int, float))
