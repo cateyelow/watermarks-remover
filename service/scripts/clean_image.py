@@ -37,11 +37,16 @@ def main() -> int:
     )
     p.add_argument(
         "--remove-pixel",
-        choices=["ctrlregen", "diffusion"],
+        choices=[
+            "ctrlregen", "diffusion", "marknull", "nfpa",
+            "fmdiffwa", "synthid_bypass", "treering", "chain",
+        ],
         default=None,
         help="Run optional pixel-watermark removal after metadata cleaning "
-        "(ctrlregen = CtrlRegen regeneration; diffusion = MarkDiffusion "
-        "DiffusionPurification regeneration)",
+        "(ctrlregen = CtrlRegen regeneration; diffusion = MarkDiffusion; "
+        "marknull = MarkNull NLAS; nfpa = NFPA next-frame; "
+        "fmdiffwa = frequency-domain Wiener; synthid_bypass = SynthID bypass; "
+        "treering = Tree-Ring notch filter; chain = auto-classify and sequence)",
     )
     p.add_argument(
         "--ctrlregen-dir",

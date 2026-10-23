@@ -2216,6 +2216,37 @@ def strip_isobmff(
     return bytes(out), actions
 
 
+def _run_engine_script(
+    script_name: str,
+    path: Path,
+    output: Path,
+    extra_args: list[str] | None = None,
+    timeout: int = 600,
+) -> dict[str, Any]:
+    """Run one of the new removal engine scripts as a subprocess."""
+    script = SCRIPTS_DIR / script_name
+    if not script.is_file():
+        return {"available": False, "error": f"{script_name} not found"}
+    cmd = [sys.executable, str(script), str(path), "-o", str(output), "--json"]
+    if extra_args:
+        cmd.extend(extra_args)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=timeout,
+        )
+        if result.returncode == 0:
+            try:
+                report = json.loads(result.stdout)
+            except (json.JSONDecodeError, ValueError):
+                report = {}
+            return {"available": True, **report}
+        if result.returncode == 3:
+            return {"available": False, "error": f"{script_name} unavailable (exit 3)"}
+        return {"available": False, "error": f"{script_name} failed (exit {result.returncode})"}
+    except subprocess.TimeoutExpired:
+        return {"available": False, "error": f"{script_name} timed out after {timeout}s"}
+
+
 def clean_image(
     path: Path,
     dest: Path,
@@ -2321,6 +2352,30 @@ def clean_image(
                     "DiffusionPurification pixel removal skipped: "
                     f"{pixel_removal.get('error', 'unknown error')}"
                 )
+        elif remove_pixel == "marknull":
+            pixel_removal = _run_engine_script("clean_marknull.py", dest, dest)
+            label = "MarkNull" if pixel_removal.get("available") else "MarkNull skipped"
+            actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
+        elif remove_pixel == "nfpa":
+            pixel_removal = _run_engine_script("clean_nfpa.py", dest, dest)
+            label = "NFPA" if pixel_removal.get("available") else "NFPA skipped"
+            actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
+        elif remove_pixel == "fmdiffwa":
+            pixel_removal = _run_engine_script("clean_fmdiffwa.py", dest, dest)
+            label = "FMDiffWA" if pixel_removal.get("available") else "FMDiffWA skipped"
+            actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
+        elif remove_pixel == "synthid_bypass":
+            pixel_removal = _run_engine_script("clean_synthid_bypass.py", dest, dest)
+            label = "SynthID bypass" if pixel_removal.get("available") else "SynthID bypass skipped"
+            actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
+        elif remove_pixel == "treering":
+            pixel_removal = _run_engine_script("clean_treering.py", dest, dest)
+            label = "TreeRing" if pixel_removal.get("available") else "TreeRing skipped"
+            actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
+        elif remove_pixel == "chain":
+            pixel_removal = _run_engine_script("attack_chain.py", dest, dest)
+            label = "AttackChain" if pixel_removal.get("available") else "AttackChain skipped"
+            actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")
         else:
             raise ValueError(f"unknown pixel remover: {remove_pixel}")
 
