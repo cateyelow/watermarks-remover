@@ -1844,9 +1844,14 @@ def run_ctrlregen_clean(
     return payload
 
 
-def _run_json_engine(cmd: list[str], name: str, timeout: int) -> dict[str, Any]:
+def _run_json_engine(
+    cmd: list[str], name: str, timeout: int, env: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Run a removal-engine CLI that prints a JSON report on stdout and exits 0 on success."""
     try:
+        run_env = None
+        if env:
+            run_env = {**os.environ, **env}
         r = subprocess.run(
             cmd,
             capture_output=True,
@@ -1854,6 +1859,7 @@ def _run_json_engine(cmd: list[str], name: str, timeout: int) -> dict[str, Any]:
             timeout=timeout,
             check=False,
             creationflags=subprocess_creationflags,
+            env=run_env,
         )
     except subprocess.TimeoutExpired:
         return {"available": False, "error": f"{name} timed out after {timeout}s"}
@@ -1962,8 +1968,6 @@ def run_flux3_clean(
         str(path),
         "-o",
         str(output),
-        "--api-key",
-        key,
         "--resolution",
         resolution,
         "--strength",
@@ -1974,7 +1978,7 @@ def run_flux3_clean(
         provider,
         "--json",
     ]
-    return _run_json_engine(cmd, "FLUX 3", timeout)
+    return _run_json_engine(cmd, "FLUX 3", timeout, env={"OPENROUTER_API_KEY": key})
 
 
 def synthid_is_watermarked(entry: dict[str, Any] | None) -> bool:

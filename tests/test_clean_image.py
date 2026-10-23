@@ -399,3 +399,61 @@ def test_remove_pixel_flux3_passes_settings_through(tmp_path: Path, monkeypatch)
     assert pr["strength"] == "minimal"
     assert pr["max_cost_usd"] == 0.1
     assert pr["provider"] == "openrouter"
+
+
+def _write_real_png(path: Path) -> None:
+    """Write a small but valid PNG that PIL can fully decode."""
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (32, 32), (128, 128, 128))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    path.write_bytes(buf.getvalue())
+
+
+def test_remove_pixel_auto_classifies_and_reports(tmp_path: Path):
+    """--remove-pixel auto runs the classifier; for a plain image it reports 'none'."""
+    src = tmp_path / "img.png"
+    _write_real_png(src)
+    result = _run(
+        "clean_image.py",
+        str(src),
+        "-o",
+        str(tmp_path / "out.png"),
+        "--remove-pixel",
+        "auto",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert "classifier" in data
+    assert data["classifier"]["scheme"] in (
+        "none",
+        "unknown",
+        "tree_ring",
+        "gaussian_shading",
+        "stegastamp",
+        "stable_signature",
+        "synthid",
+        "hidden",
+        "trustmark",
+    )
+
+
+def test_stealth_check_flag(tmp_path: Path):
+    """--stealth-check runs forensic_check.py and adds 'forensic' key."""
+    src = tmp_path / "img.png"
+    _write_real_png(src)
+    result = _run(
+        "clean_image.py",
+        str(src),
+        "-o",
+        str(tmp_path / "out.png"),
+        "--stealth-check",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert "forensic" in data

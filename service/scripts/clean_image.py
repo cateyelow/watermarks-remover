@@ -13,12 +13,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import backup_path, cleaned_path, eprint
 from image_meta import clean_image
 
+ENGINE_AUTO = "auto"
+
 ENGINE_NAMES = {
+    "auto": "AutoChain",
     "ctrlregen": "CtrlRegen",
     "diffusion": "DiffusionPurification",
     "marknull": "MarkNull",
     "nfpa": "NFPA",
     "flux3": "FLUX 3",
+    "chain": "AttackChain",
 }
 
 
@@ -46,6 +50,7 @@ def main() -> int:
     p.add_argument(
         "--remove-pixel",
         choices=[
+            "auto",
             "ctrlregen",
             "diffusion",
             "marknull",
@@ -58,11 +63,21 @@ def main() -> int:
         ],
         default=None,
         help="Run optional pixel-watermark removal after metadata cleaning "
-        "(ctrlregen = CtrlRegen regeneration; diffusion = MarkDiffusion; "
-        "marknull = MarkNull NLAS; nfpa = NFPA next-frame; "
+        "(auto = classify then chain; ctrlregen = CtrlRegen regeneration; "
+        "diffusion = MarkDiffusion; marknull = MarkNull NLAS; nfpa = NFPA next-frame; "
         "fmdiffwa = frequency-domain Wiener; synthid_bypass = SynthID bypass; "
         "treering = Tree-Ring notch filter; chain = auto-classify and sequence; "
         "flux3 = FLUX 3 API regeneration, needs an OpenRouter key)",
+    )
+    p.add_argument(
+        "--classify",
+        action="store_true",
+        help="Run watermark type classifier before removal (used with auto/chain)",
+    )
+    p.add_argument(
+        "--stealth-check",
+        action="store_true",
+        help="Run forensic stealth check after removal",
     )
     p.add_argument(
         "--ctrlregen-dir",
@@ -245,13 +260,16 @@ def main() -> int:
         src = args.path
         dest = args.output or cleaned_path(args.path)
 
+    is_auto = args.remove_pixel == ENGINE_AUTO
+    effective_remove_pixel = None if is_auto else args.remove_pixel
+
     try:
         result = clean_image(
             src,
             dest,
             strip_all_metadata=not args.keep_non_ai_metadata,
             synthid_dir=args.synthid_dir,
-            remove_pixel=args.remove_pixel,
+            remove_pixel=effective_remove_pixel,
             ctrlregen_dir=args.ctrlregen_dir,
             ctrlregen_intensity=args.ctrlregen_intensity,
             ctrlregen_steps=args.ctrlregen_steps,
@@ -284,6 +302,54 @@ def main() -> int:
         eprint(f"error: {e}")
         return 1
 
+    if is_auto or (args.remove_pixel == "chain" and args.classify):
+        from attack_chain import run_chain
+        from classify_watermark import WatermarkClassifier
+
+        classifier = WatermarkClassifier()
+        cr = classifier.classify(str(dest))
+        scheme = cr.scheme
+        result["classifier"] = {"scheme": scheme, "confidence": round(cr.confidence, 4)}
+        if scheme not in ("none", "unknown"):
+            eprint(f"classified as {scheme} (confidence {cr.confidence:.2f}), running chain")
+            chain_result = run_chain(dest, scheme, output_path=dest)
+            result["pixel_removal"] = {
+                "available": True,
+                "engine": "chain",
+                "scheme": scheme,
+                "steps_run": chain_result.steps_run,
+                "stealth_score": chain_result.stealth_score,
+                "elapsed_s": round(chain_result.elapsed_s, 2),
+            }
+        else:
+            eprint(f"no watermark detected (scheme={scheme}), skipping chain")
+
+    if args.stealth_check and dest.is_file():
+        import subprocess as _sp
+
+        from common import subprocess_creationflags
+
+        _fc = _sp.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parent / "forensic_check.py"),
+                str(dest),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+            creationflags=subprocess_creationflags,
+        )
+        if _fc.returncode == 0:
+            try:
+                result["forensic"] = json.loads(_fc.stdout)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                result["forensic"] = {"error": "parse failed"}
+        else:
+            result["forensic"] = {"error": f"exit {_fc.returncode}"}
+
     pr = result.get("pixel_removal")
     residual = result["still_has_c2pa"] or result["still_has_ai_metadata"]
     failed = residual or (pr is not None and not pr.get("available"))
@@ -309,7 +375,9 @@ def main() -> int:
                 f"(watermarked: {label})"
             )
         if pr is not None:
-            engine = ENGINE_NAMES.get(args.remove_pixel, args.remove_pixel)
+            engine = ENGINE_NAMES.get(
+                args.remove_pixel or "", pr.get("engine", args.remove_pixel or "")
+            )
             if pr.get("available"):
                 where = pr.get("device") or pr.get("provider") or "unknown device"
                 eprint(f"{engine}: removed on {where}")
