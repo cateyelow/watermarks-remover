@@ -75,7 +75,8 @@ def main() -> int:
     p.add_argument(
         "--classify",
         action="store_true",
-        help="Run watermark type classifier and add result to JSON output "
+        help="Classify watermark type on the original image before removal "
+        "and add result to JSON output "
         "(with chain: classify then run chain in-process; standalone: classify only)",
     )
     p.add_argument(
@@ -268,6 +269,14 @@ def main() -> int:
     use_inprocess_chain = is_auto or (args.remove_pixel == "chain" and args.classify)
     effective_remove_pixel = None if use_inprocess_chain else args.remove_pixel
 
+    pre_classify_result = None
+    if args.classify and not use_inprocess_chain:
+        from classify_watermark import WatermarkClassifier
+
+        classifier = WatermarkClassifier()
+        cr = classifier.classify(str(args.path))
+        pre_classify_result = {"scheme": cr.scheme, "confidence": round(cr.confidence, 4)}
+
     try:
         result = clean_image(
             src,
@@ -329,12 +338,8 @@ def main() -> int:
             }
         else:
             eprint(f"no watermark detected (scheme={scheme}), skipping chain")
-    elif args.classify and dest.is_file():
-        from classify_watermark import WatermarkClassifier
-
-        classifier = WatermarkClassifier()
-        cr = classifier.classify(str(dest))
-        result["classifier"] = {"scheme": cr.scheme, "confidence": round(cr.confidence, 4)}
+    elif pre_classify_result is not None:
+        result["classifier"] = pre_classify_result
 
     if args.stealth_check and dest.is_file():
         import subprocess as _sp
