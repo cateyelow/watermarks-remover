@@ -78,7 +78,7 @@ def _patch_windows(height: int, width: int, patch_size: int) -> list[tuple[slice
     return windows
 
 
-def merge_patches(patches: list[Tensor], shape: Any, patch_size: int) -> Tensor:
+def merge_patches(patches: list[Tensor], shape: tuple[int, ...], patch_size: int) -> Tensor:
     """Blend patches from ``_split_patches`` back into an (N, C, H, W) image."""
     import torch
 
