@@ -104,6 +104,7 @@ docker compose up wr-marknull wr-forensic
 ## Dependencies
 
 Core engines need `numpy`, `scipy`, and `Pillow`.  MarkNull and NFPA
-additionally need `torch` and `diffusers` (install separately; not in
-`requirements-dev.txt` since they require GPU-specific builds).  FLUX 3
-needs `httpx`.  `httpx` and `Pillow` are listed in `requirements-dev.txt`.
+additionally need `torch`, `diffusers`, and `transformers` (install
+separately; not in `requirements-dev.txt` since they require GPU-specific
+builds).  FLUX 3 needs `httpx`.  `httpx`, `Pillow`, `numpy`, and `scipy`
+are listed in `requirements-dev.txt`.
