@@ -100,8 +100,11 @@ def _downscale(image_bytes: bytes, resolution: str) -> bytes:
         raise Flux3Unavailable(
             "input is too large to send inline and Pillow is not installed to downscale it"
         ) from exc
-    with Image.open(io.BytesIO(image_bytes)) as src:
-        img = src.convert("RGB")
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as src:
+            img = src.convert("RGB")
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("FLUX 3 input could not be decoded for downscaling") from exc
     side = _LONG_SIDE_PX.get(resolution.lower(), 1024)
     while True:
         img.thumbnail((side, side), Image.Resampling.LANCZOS)

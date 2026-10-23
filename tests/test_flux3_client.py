@@ -90,6 +90,17 @@ def test_cost_guard_per_image_limit():
     assert guard.check("4k") is False  # 0.61 > 0.10
 
 
+def test_cost_guard_batch_limit_alone():
+    from flux3_client import Flux3CostGuard
+
+    guard = Flux3CostGuard(max_per_image=0.50, max_per_batch=0.30)
+    guard.record(0.10)
+    guard.record(0.10)
+    assert guard.check("2k") is True  # 0.20 + 0.10 within budget
+    guard.record(0.10)
+    assert guard.check("1k") is False  # 0.30 + 0.05 > 0.30
+
+
 def test_generate_sends_correct_payload(monkeypatch):
     pytest.importorskip("httpx")
     import types
@@ -99,7 +110,7 @@ def test_generate_sends_correct_payload(monkeypatch):
     captured = {}
 
     def mock_post(url, *, json, headers, timeout):
-        captured.update(json=json, url=url)
+        captured.update(json=json, url=url, headers=headers, timeout=timeout)
         resp = types.SimpleNamespace(
             status_code=200,
             json=lambda: {
@@ -113,10 +124,20 @@ def test_generate_sends_correct_payload(monkeypatch):
     monkeypatch.setattr("flux3_client.httpx.post", mock_post)
     client = Flux3Client(api_key="test-key")
     result = client.generate(JPEG_1X1, "reproduce exactly", resolution="2k")
+    assert captured["url"] == "https://openrouter.ai/api/v1/images"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["timeout"] == 120.0
     assert captured["json"]["model"] == "black-forest-labs/flux-3-image"
     assert captured["json"]["resolution"] == "2K"
-    assert len(captured["json"]["input_references"]) == 1
+    assert captured["json"]["prompt"] == "reproduce exactly"
+    assert captured["json"]["aspect_ratio"] == "auto"
+    assert captured["json"]["n"] == 1
+    refs = captured["json"]["input_references"]
+    assert len(refs) == 1
+    assert refs[0]["type"] == "image_url"
+    assert refs[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert result.cost_usd == pytest.approx(0.04)
+    assert result.media_type == "image/png"
     assert len(result.image_bytes) > 0
 
 
