@@ -80,6 +80,14 @@ Evaluation scripts measure removal effectiveness (TPR: fraction of
 watermarks still detected after removal) and image quality (PSNR, SSIM).
 LPIPS and FID require torch and are reported as null when unavailable.
 
+**PSNR/SSIM caveat for latent-space watermarks:** these metrics compare
+clean reference images to removal outputs.  For schemes like Tree-Ring
+that modify initial latent noise, the clean and watermarked images can
+diverge significantly even before any removal is applied, so PSNR/SSIM
+reflect both removal artifacts and the inherent latent divergence.
+These metrics are most meaningful for pixel-domain watermarks (StegaStamp,
+Stable Signature) where clean and watermarked images are visually similar.
+
 **Important:** the built-in classifier (`classify_watermark.py`) is a
 routing heuristic based on spatial/frequency features.  It cannot detect
 real latent-space watermarks like Tree-Ring or Gaussian Shading.  For
