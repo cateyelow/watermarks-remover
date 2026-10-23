@@ -401,22 +401,42 @@ def test_remove_pixel_flux3_passes_settings_through(tmp_path: Path, monkeypatch)
     assert pr["provider"] == "openrouter"
 
 
-def _write_real_png(path: Path) -> None:
+def _write_real_png(path: Path, noise: bool = False) -> None:
     """Write a small but valid PNG that PIL can fully decode."""
     import io
 
+    import numpy as np
     from PIL import Image
 
-    img = Image.new("RGB", (32, 32), (128, 128, 128))
+    if noise:
+        arr = np.random.RandomState(42).randint(0, 255, (64, 64, 3), dtype=np.uint8)
+        img = Image.fromarray(arr)
+    else:
+        img = Image.new("RGB", (32, 32), (128, 128, 128))
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     path.write_bytes(buf.getvalue())
 
 
+_VALID_SCHEMES = frozenset(
+    {
+        "none",
+        "unknown",
+        "tree_ring",
+        "gaussian_shading",
+        "stegastamp",
+        "stable_signature",
+        "synthid",
+        "hidden",
+        "trustmark",
+    }
+)
+
+
 def test_remove_pixel_auto_classifies_and_reports(tmp_path: Path):
-    """--remove-pixel auto runs the classifier; for a plain image it reports 'none'."""
+    """--remove-pixel auto runs classifier and reports a valid scheme with confidence."""
     src = tmp_path / "img.png"
-    _write_real_png(src)
+    _write_real_png(src, noise=True)
     result = _run(
         "clean_image.py",
         str(src),
@@ -429,17 +449,26 @@ def test_remove_pixel_auto_classifies_and_reports(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert "classifier" in data
-    assert data["classifier"]["scheme"] in (
-        "none",
-        "unknown",
-        "tree_ring",
-        "gaussian_shading",
-        "stegastamp",
-        "stable_signature",
-        "synthid",
-        "hidden",
-        "trustmark",
+    assert data["classifier"]["scheme"] in _VALID_SCHEMES
+    assert 0.0 <= data["classifier"]["confidence"] <= 1.0
+
+
+def test_classify_flag_adds_classifier_key(tmp_path: Path):
+    """--classify with a specific engine adds classifier output without affecting removal."""
+    src = tmp_path / "img.png"
+    _write_real_png(src, noise=True)
+    result = _run(
+        "clean_image.py",
+        str(src),
+        "-o",
+        str(tmp_path / "out.png"),
+        "--classify",
+        "--json",
     )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert "classifier" in data
+    assert data["classifier"]["scheme"] in _VALID_SCHEMES
 
 
 def test_stealth_check_flag(tmp_path: Path):

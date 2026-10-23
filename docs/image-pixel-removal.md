@@ -34,7 +34,11 @@ python service/scripts/clean_image.py input.png output.png --remove-pixel marknu
 
 # Auto mode: classify then chain
 python service/scripts/clean_image.py input.png output.png \
-    --remove-pixel auto --classify --stealth-check
+    --remove-pixel auto --stealth-check
+
+# Explicit chain with classification
+python service/scripts/clean_image.py input.png output.png \
+    --remove-pixel chain --classify
 
 # FLUX 3 regeneration (needs OPENROUTER_API_KEY)
 python service/scripts/clean_image.py input.png output.png \
@@ -43,7 +47,7 @@ python service/scripts/clean_image.py input.png output.png \
 
 ## Attack Chain (auto mode)
 
-When `--remove-pixel auto` is used with `--classify`, the system:
+When `--remove-pixel auto` is used (or `--remove-pixel chain --classify`), the system:
 
 1. Runs `classify_watermark.py` to detect the watermark type
 2. Looks up the optimal attack chain for that type
@@ -63,18 +67,31 @@ Outputs with a combined stealth score below the threshold are flagged.
 
 ## 4K / Large Image Support
 
-Images larger than 512x512 are automatically tiled via `tile_utils.py`:
-overlapping tiles are processed independently and merged with
-boundary-aware cosine feathering.
+`tile_utils.py` provides `split_tiles`, `merge_tiles`, and `process_tiled`
+for processing large images without exhausting GPU memory.  Engines can
+call `process_tiled(image, engine_fn)` to automatically split into
+overlapping tiles, process each, and merge with boundary-aware cosine
+feathering.  This is a utility module; individual engines opt in by
+calling it explicitly.
 
 ## Evaluation
+
+Evaluation scripts are provided but require the WAVES dataset and a
+GPU with torch installed.  No pre-computed results are included.
 
 - **WAVES benchmark** (`benchmarks/bench_waves.py`): per-engine watermark
   removal success rate and image quality metrics.
 - **Forensic evaluation** (`benchmarks/bench_forensic.py`): per-engine
   forensic detectability rates.
 - **Full matrix** (`benchmarks/run_full_eval.sh`): watermark x engine x
-  intensity sweep.
+  intensity sweep.  Produces `results/eval_matrix.json`.
+
+To run: download the [WAVES dataset](https://github.com/waves-benchmark/waves),
+install torch with CUDA, then:
+
+```bash
+./benchmarks/run_full_eval.sh --waves-dir /path/to/WAVES --output-dir results/
+```
 
 ## Docker
 
@@ -87,5 +104,6 @@ docker compose up wr-marknull wr-forensic
 ## Dependencies
 
 Core engines need `numpy`, `scipy`, and `Pillow`.  MarkNull and NFPA
-additionally need `torch` and `diffusers`.  FLUX 3 needs `httpx`.
-All are listed in `requirements-dev.txt`.
+additionally need `torch` and `diffusers` (install separately; not in
+`requirements-dev.txt` since they require GPU-specific builds).  FLUX 3
+needs `httpx`.  `httpx` and `Pillow` are listed in `requirements-dev.txt`.

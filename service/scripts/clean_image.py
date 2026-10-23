@@ -264,7 +264,8 @@ def main() -> int:
         dest = args.output or cleaned_path(args.path)
 
     is_auto = args.remove_pixel == ENGINE_AUTO
-    effective_remove_pixel = None if is_auto else args.remove_pixel
+    use_inprocess_chain = is_auto or (args.remove_pixel == "chain" and args.classify)
+    effective_remove_pixel = None if use_inprocess_chain else args.remove_pixel
 
     try:
         result = clean_image(
@@ -305,7 +306,7 @@ def main() -> int:
         eprint(f"error: {e}")
         return 1
 
-    if is_auto:
+    if use_inprocess_chain:
         from attack_chain import run_chain
         from classify_watermark import WatermarkClassifier
 
@@ -326,6 +327,12 @@ def main() -> int:
             }
         else:
             eprint(f"no watermark detected (scheme={scheme}), skipping chain")
+    elif args.classify and dest.is_file():
+        from classify_watermark import WatermarkClassifier
+
+        classifier = WatermarkClassifier()
+        cr = classifier.classify(str(dest))
+        result["classifier"] = {"scheme": cr.scheme, "confidence": round(cr.confidence, 4)}
 
     if args.stealth_check and dest.is_file():
         import subprocess as _sp
