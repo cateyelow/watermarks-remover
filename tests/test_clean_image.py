@@ -405,10 +405,11 @@ def _write_real_png(path: Path, noise: bool = False) -> None:
     """Write a small but valid PNG that PIL can fully decode."""
     import io
 
-    import numpy as np
     from PIL import Image
 
     if noise:
+        import numpy as np
+
         arr = np.random.RandomState(42).randint(0, 255, (64, 64, 3), dtype=np.uint8)
         img = Image.fromarray(arr)
     else:
@@ -454,7 +455,7 @@ def test_remove_pixel_auto_classifies_and_reports(tmp_path: Path):
 
 
 def test_classify_flag_adds_classifier_key(tmp_path: Path):
-    """--classify with a specific engine adds classifier output without affecting removal."""
+    """--classify alone adds classifier output to JSON."""
     src = tmp_path / "img.png"
     _write_real_png(src, noise=True)
     result = _run(
@@ -469,6 +470,28 @@ def test_classify_flag_adds_classifier_key(tmp_path: Path):
     data = json.loads(result.stdout)
     assert "classifier" in data
     assert data["classifier"]["scheme"] in _VALID_SCHEMES
+
+
+def test_chain_classify_runs_chain_on_unknown(tmp_path: Path):
+    """--remove-pixel chain --classify runs chain even for unknown scheme."""
+    src = tmp_path / "img.png"
+    _write_real_png(src, noise=True)
+    result = _run(
+        "clean_image.py",
+        str(src),
+        "-o",
+        str(tmp_path / "out.png"),
+        "--remove-pixel",
+        "chain",
+        "--classify",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert "classifier" in data
+    assert data["classifier"]["scheme"] in _VALID_SCHEMES
+    assert "pixel_removal" in data
+    assert data["pixel_removal"]["engine"] == "chain"
 
 
 def test_stealth_check_flag(tmp_path: Path):

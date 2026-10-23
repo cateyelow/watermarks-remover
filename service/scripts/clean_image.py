@@ -75,7 +75,8 @@ def main() -> int:
     p.add_argument(
         "--classify",
         action="store_true",
-        help="Run watermark type classifier before removal (used with auto/chain)",
+        help="Run watermark type classifier and add result to JSON output "
+        "(with chain: classify then run chain in-process; standalone: classify only)",
     )
     p.add_argument(
         "--stealth-check",
@@ -314,7 +315,8 @@ def main() -> int:
         cr = classifier.classify(str(dest))
         scheme = cr.scheme
         result["classifier"] = {"scheme": scheme, "confidence": round(cr.confidence, 4)}
-        if scheme not in ("none", "unknown"):
+        skip_chain = scheme == "none" or (is_auto and scheme == "unknown")
+        if not skip_chain:
             eprint(f"classified as {scheme} (confidence {cr.confidence:.2f}), running chain")
             chain_result = run_chain(dest, scheme, output_path=dest)
             result["pixel_removal"] = {

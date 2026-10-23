@@ -86,7 +86,7 @@ GPU with torch installed.  No pre-computed results are included.
 - **Full matrix** (`benchmarks/run_full_eval.sh`): watermark x engine x
   intensity sweep.  Produces `results/eval_matrix.json`.
 
-To run: download the [WAVES dataset](https://github.com/waves-benchmark/waves),
+To run: download the [WAVES dataset](https://github.com/umd-huang-lab/WAVES),
 install torch with CUDA, then:
 
 ```bash
