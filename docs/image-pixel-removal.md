@@ -76,21 +76,44 @@ calling it explicitly.
 
 ## Evaluation
 
-Evaluation scripts are provided but require the WAVES dataset and a
-GPU with torch installed.  No pre-computed results are included.
+Evaluation scripts measure removal effectiveness (TPR: fraction of
+watermarks still detected after removal) and image quality (PSNR, SSIM).
+LPIPS and FID require torch and are reported as null when unavailable.
 
 - **WAVES benchmark** (`benchmarks/bench_waves.py`): per-engine watermark
-  removal success rate and image quality metrics.
+  removal success rate (TPR via `classify_watermark.py`) and image quality
+  metrics (PSNR, SSIM, optional LPIPS/FID).
 - **Forensic evaluation** (`benchmarks/bench_forensic.py`): per-engine
   forensic detectability rates.
 - **Full matrix** (`benchmarks/run_full_eval.sh`): watermark x engine x
   intensity sweep.  Produces `results/eval_matrix.json`.
 
-To run: download the [WAVES dataset](https://github.com/umd-huang-lab/WAVES),
-install torch with CUDA, then:
+### Dataset setup
+
+The benchmark expects this directory layout:
+
+```
+<waves-dir>/<dataset>/<watermark>/*.png   # watermarked images
+<waves-dir>/<dataset>/clean/*.png         # clean reference images
+```
+
+The [WAVES project](https://github.com/umd-huang-lab/WAVES) does not
+distribute a pre-built image dataset.  Its repository contains code to
+generate watermarked images from source datasets (COCO, DiffusionDB,
+DALL-E 3) using watermark model weights (Tree-Ring, StegaStamp, Stable
+Signature).  Alternatively, create a minimal test set with synthetic
+watermarked images (numpy can generate Tree-Ring-like ring patterns).
+
+Once the dataset directory is prepared:
 
 ```bash
-./benchmarks/run_full_eval.sh --waves-dir /path/to/WAVES --output-dir results/
+# Single engine/watermark pair
+python benchmarks/bench_waves.py \
+    --waves-dir /path/to/dataset --engine chain \
+    --watermark tree_ring --output-dir results/ --json
+
+# Full sweep (requires torch + CUDA for GPU engines)
+./benchmarks/run_full_eval.sh --waves-dir /path/to/dataset --output-dir results/
 ```
 
 ## Docker

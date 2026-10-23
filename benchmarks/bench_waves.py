@@ -32,8 +32,8 @@ class WavesResult(NamedTuple):
     tpr: float
     psnr: float
     ssim: float
-    lpips: float
-    fid: float
+    lpips: float | None
+    fid: float | None
     n_images: int
 
 
@@ -84,6 +84,7 @@ class WavesAdapter:
 
         psnrs: list[float] = []
         ssims: list[float] = []
+        still_detected = 0
         images_processed = 0
 
         for img_path in sorted(wm_dir.glob("*.png")):
@@ -112,6 +113,30 @@ class WavesAdapter:
                 continue
 
             images_processed += 1
+
+            cr = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "classify_watermark.py"),
+                    str(out_path),
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+                creationflags=subprocess_creationflags,
+            )
+            if cr.returncode == 0:
+                import json as _json
+
+                try:
+                    cj = _json.loads(cr.stdout)
+                    if cj.get("scheme", "none") not in ("none", "unknown"):
+                        still_detected += 1
+                except (ValueError, TypeError):
+                    pass
+
             if clean_path and clean_path.is_file() and out_path.is_file():
                 from PIL import Image
 
@@ -121,12 +146,13 @@ class WavesAdapter:
                     psnrs.append(compute_psnr(orig, out))
                     ssims.append(compute_ssim(orig, out))
 
+        tpr = still_detected / images_processed if images_processed > 0 else 0.0
         return WavesResult(
-            tpr=0.0,
+            tpr=tpr,
             psnr=float(np.mean(psnrs)) if psnrs else 0.0,
             ssim=float(np.mean(ssims)) if ssims else 0.0,
-            lpips=0.0,
-            fid=0.0,
+            lpips=None,
+            fid=None,
             n_images=images_processed,
         )
 
@@ -167,16 +193,19 @@ def main() -> int:
                 "tpr": round(result.tpr, 4),
                 "psnr": round(result.psnr, 2),
                 "ssim": round(result.ssim, 4),
-                "lpips": round(result.lpips, 4),
-                "fid": round(result.fid, 2),
+                "lpips": round(result.lpips, 4) if result.lpips is not None else None,
+                "fid": round(result.fid, 2) if result.fid is not None else None,
                 "n_images": result.n_images,
                 "elapsed_s": round(elapsed, 2),
             }
         )
     else:
+        lpips_s = f"{result.lpips:.4f}" if result.lpips is not None else "N/A (needs torch)"
+        fid_s = f"{result.fid:.2f}" if result.fid is not None else "N/A (needs torch)"
         eprint(
             f"{args.watermark}/{args.engine}: TPR={result.tpr:.3f} "
             f"PSNR={result.psnr:.1f} SSIM={result.ssim:.3f} "
+            f"LPIPS={lpips_s} FID={fid_s} "
             f"n={result.n_images} ({elapsed:.1f}s)"
         )
     return 0
