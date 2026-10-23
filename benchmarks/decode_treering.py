@@ -170,7 +170,7 @@ def main() -> int:
     p.add_argument("--model", default="huanzi05/stable-diffusion-2-1-base")
     p.add_argument("--w-radius", type=int, default=10)
     p.add_argument("--w-seed", type=int, default=999999)
-    p.add_argument("--threshold", type=float, default=None, help="L1 threshold (auto if omitted)")
+    p.add_argument("--threshold", type=float, default=None, help="L1 threshold (default 78.0)")
     p.add_argument("--prompt", type=str, default="", help="Generation prompt for guided inversion")
     args = p.parse_args()
 
