@@ -472,6 +472,38 @@ def test_classify_flag_adds_classifier_key(tmp_path: Path):
     assert data["classifier"]["scheme"] in _VALID_SCHEMES
 
 
+def test_classify_standalone_uses_original_image(tmp_path: Path, monkeypatch):
+    """--classify without auto/chain classifies the original input, not the output."""
+    src = tmp_path / "img.png"
+    _write_real_png(src, noise=True)
+    out = tmp_path / "out.png"
+
+    classified_paths: list[str] = []
+
+    import classify_watermark as cw
+
+    _real = cw.WatermarkClassifier.classify
+
+    def spy(self, path):
+        classified_paths.append(path)
+        return _real(self, path)
+
+    monkeypatch.setattr(cw.WatermarkClassifier, "classify", spy)
+    monkeypatch.setattr("sys.argv", [
+        "clean_image.py", str(src), "-o", str(out), "--classify", "--json",
+    ])
+
+    from io import StringIO
+
+    import clean_image as ci
+
+    monkeypatch.setattr("sys.stdout", StringIO())
+    ci.main()
+
+    assert len(classified_paths) == 1
+    assert Path(classified_paths[0]) == src
+
+
 def test_chain_classify_runs_chain_on_unknown(tmp_path: Path):
     """--remove-pixel chain --classify runs chain even for unknown scheme."""
     src = tmp_path / "img.png"
