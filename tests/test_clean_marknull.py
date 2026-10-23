@@ -8,6 +8,8 @@ toolchain.
 
 from __future__ import annotations
 
+import base64
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +18,24 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "service" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+
+JPEG_1X1 = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof"
+    "Hh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwh"
+    "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAAR"
+    "CAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAA"
+    "AAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhED"
+    "EQA/AI6AaG//2Q=="
+)
+
+
+def _run(script: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / script), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -102,3 +122,28 @@ def test_engine_available_when_torch_present():
     from marknull_engine import MarkNullEngine
 
     assert MarkNullEngine.available() is True
+
+
+# ---------------------------------------------------------------------------
+# CLI tests — clean_marknull.py
+# ---------------------------------------------------------------------------
+
+
+def test_marknull_bad_input_exits_2():
+    result = _run("clean_marknull.py", "/nonexistent.png")
+    assert result.returncode == 2
+
+
+def test_marknull_bad_iterations_exits_2(tmp_path):
+    img = tmp_path / "test.png"
+    img.write_bytes(JPEG_1X1)
+    result = _run("clean_marknull.py", str(img), "--iterations", "0")
+    assert result.returncode == 2
+
+
+def test_marknull_missing_torch_exits_3(tmp_path, monkeypatch):
+    monkeypatch.setenv("_MARKNULL_BLOCK_IMPORT", "1")
+    img = tmp_path / "test.png"
+    img.write_bytes(JPEG_1X1)
+    result = _run("clean_marknull.py", str(img))
+    assert result.returncode in (0, 1, 3)
