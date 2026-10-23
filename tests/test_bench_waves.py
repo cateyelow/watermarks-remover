@@ -15,7 +15,9 @@ sys.path.insert(0, str(SCRIPTS))
 def test_waves_result_has_required_metrics():
     from bench_waves import WavesResult
 
-    r = WavesResult(tpr=0.05, tpr_before=0.95, psnr=32.0, ssim=0.96, lpips=0.04, fid=15.0, n_images=100)
+    r = WavesResult(
+        tpr=0.05, tpr_before=0.95, psnr=32.0, ssim=0.96, lpips=0.04, fid=15.0, n_images=100
+    )
     assert 0.0 <= r.tpr <= 1.0
     assert 0.0 <= r.tpr_before <= 1.0
     assert r.psnr > 0
