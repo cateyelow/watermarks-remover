@@ -62,7 +62,7 @@ def test_fmdiffwa_handles_non_square_images():
 
     mod = FrequencyWatermarkModulator(patch_size=256)
     patches = mod._split_patches(torch.randn(1, 3, 512, 768), patch_size=256)
-    assert len(patches) == 6  # 2x3 grid
+    assert len(patches) == 12  # 3x4 grid with guaranteed overlap
 
 
 def test_fmdiffwa_overlapping_patches_merge_back_exactly():

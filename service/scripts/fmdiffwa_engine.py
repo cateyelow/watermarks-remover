@@ -1,12 +1,13 @@
 """FMDiffWA (frequency-modulated diffusion watermark attack) remover.
 
-Reimplemented from arXiv 2604.22220; no reference code is vendored. The image
-is tiled into overlapping patches. In each patch's spectrum, radial bands whose
-energy rises above the natural-image power-law trend, and isolated peaks that
-stand out of their band, are treated as watermark-correlated and softly pulled
-back to the expected level. An optional low-strength Stable Diffusion img2img
-pass per patch then restores texture, and the patches are merged with cosine
-feathering across their overlaps.
+Reimplemented from arXiv 2604.22220; no reference code is vendored.
+Frequency filtering runs on the full image at once (with reflection
+padding to reduce perimeter artifacts). Radial bands whose energy rises
+above the natural-image power-law trend, and isolated peaks that stand
+out of their band, are treated as watermark-correlated and softly pulled
+back to the expected level. An optional low-strength Stable Diffusion
+img2img pass tiles the filtered result with guaranteed overlap and
+cosine feathering to restore texture.
 
 torch is required; diffusers and transformers are optional and imported
 lazily. Without them the engine runs the frequency stage only.
@@ -41,11 +42,15 @@ CUT_GAIN = 2.0
 MIN_FILTER_SIZE = 16
 
 
-def _axis_starts(size: int, patch: int) -> list[int]:
+def _axis_starts(size: int, patch: int, min_overlap: int | None = None) -> list[int]:
     """Patch origins along one axis; patches overlap so the last ends flush with the edge."""
     if size <= patch:
         return [0]
-    count = math.ceil(size / patch)
+    if min_overlap is None:
+        min_overlap = max(32, -(-patch // 4))  # ceil(patch/4)
+    min_overlap = min(min_overlap, patch - 1)
+    step = patch - min_overlap
+    count = max(2, math.ceil((size - min_overlap) / step))
     return [round(i * (size - patch) / (count - 1)) for i in range(count)]
 
 
@@ -56,19 +61,23 @@ def _axis_weights(starts: list[int], length: int, index: int) -> Tensor:
     weights = torch.ones(length)
     if index > 0:
         overlap = starts[index - 1] + length - starts[index]
-        ramp = 0.5 - 0.5 * torch.cos(torch.pi * (torch.arange(overlap) + 0.5) / overlap)
-        weights[:overlap] = ramp
+        if overlap > 0:
+            ramp = 0.5 - 0.5 * torch.cos(torch.pi * (torch.arange(overlap) + 0.5) / overlap)
+            weights[:overlap] = ramp
     if index < len(starts) - 1:
         overlap = starts[index] + length - starts[index + 1]
-        ramp = 0.5 - 0.5 * torch.cos(torch.pi * (torch.arange(overlap) + 0.5) / overlap)
-        weights[length - overlap :] = ramp.flip(0)
+        if overlap > 0:
+            ramp = 0.5 - 0.5 * torch.cos(torch.pi * (torch.arange(overlap) + 0.5) / overlap)
+            weights[length - overlap :] *= ramp.flip(0)
     return weights
 
 
-def _patch_windows(height: int, width: int, patch_size: int) -> list[tuple[slice, slice, Tensor]]:
+def _patch_windows(
+    height: int, width: int, patch_size: int, min_overlap: int | None = None
+) -> list[tuple[slice, slice, Tensor]]:
     """Row-major (rows, cols, 2-D feather weight) for every patch of the tiling."""
     ph, pw = min(patch_size, height), min(patch_size, width)
-    ys, xs = _axis_starts(height, ph), _axis_starts(width, pw)
+    ys, xs = _axis_starts(height, ph, min_overlap), _axis_starts(width, pw, min_overlap)
     windows = []
     for i, y in enumerate(ys):
         wy = _axis_weights(ys, ph, i)
@@ -157,9 +166,16 @@ class FrequencyWatermarkModulator:
         self.patch_size = patch_size
 
     def modulate(self, image: Tensor) -> Tensor:
-        """Suppress watermark-correlated frequencies of an (N, C, H, W) image, per patch."""
-        patches = [_suppress_patch(p) for p in self._split_patches(image, self.patch_size)]
-        return merge_patches(patches, image.shape, self.patch_size)
+        """Suppress watermark-correlated frequencies of the full (N, C, H, W) image at once."""
+        import torch.nn.functional as F
+
+        h, w = image.shape[-2:]
+        pad = min(128, h // 4, w // 4)
+        if pad >= 4:
+            padded = F.pad(image, (pad, pad, pad, pad), mode="reflect")
+            filtered = _suppress_patch(padded)
+            return filtered[..., pad : pad + h, pad : pad + w]
+        return _suppress_patch(image)
 
     def _split_patches(self, image: Tensor, patch_size: int) -> list[Tensor]:
         """Overlapping ``patch_size`` tiles of an (N, C, H, W) image, row-major."""
@@ -222,7 +238,7 @@ class FMDiffWAEngine:
         ).clamp(0, 1)
 
     def remove(self, image: Image, intensity: float = 0.3, steps: int = 50) -> Image:
-        """Frequency-suppress each patch, optionally diffusion-refine it, and merge.
+        """Frequency-suppress the full image, optionally diffusion-refine per tile, and merge.
 
         ``intensity`` is the img2img strength in [0, 1]; refinement runs only when
         diffusers + transformers are installed and ``steps * intensity >= 1``.
@@ -239,12 +255,16 @@ class FMDiffWAEngine:
         pixels = pixels.permute(2, 0, 1).unsqueeze(0).to(self.device)
         self.refined = int(steps * intensity) >= 1 and self.refinement_available()
 
-        out = []
         with torch.no_grad():
-            for patch in self.modulator._split_patches(pixels, self.patch_size):
-                filtered = self.modulator.modulate(patch).clamp(0, 1)
-                out.append(self._refine(filtered, intensity, steps) if self.refined else filtered)
-            merged = merge_patches(out, pixels.shape, self.patch_size)
+            filtered = self.modulator.modulate(pixels).clamp(0, 1)
+
+            if self.refined:
+                out = []
+                for patch in self.modulator._split_patches(filtered, self.patch_size):
+                    out.append(self._refine(patch, intensity, steps))
+                merged = merge_patches(out, filtered.shape, self.patch_size)
+            else:
+                merged = filtered
 
         array = (merged[0].clamp(0, 1) * 255).round().to(torch.uint8)
         return PILImage.fromarray(array.permute(1, 2, 0).cpu().numpy())

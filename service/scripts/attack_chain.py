@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -25,40 +26,78 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from common import cleaned_path, emit_json, eprint, subprocess_creationflags  # noqa: E402
 
+_FLUX3_ENGINES = frozenset({"clean_flux3.py"})
+_FLUX3_TIERS = [(768, "768"), (1024, "1k"), (1536, "1.5k"), (2048, "2k"), (4096, "4k")]
+
+
+def _pick_flux3_resolution(width: int, height: int) -> str:
+    """Choose the Flux3 tier where the resize-back is at most ~25% upscale."""
+    long_side = max(width, height)
+    for threshold, tier in _FLUX3_TIERS:
+        if threshold >= long_side * 0.75:
+            return tier
+    return "4k"
+
+
+def _resolve_api_key(explicit: str | None) -> str:
+    """Return the OpenRouter API key from arg, env, or ~/.claude/openrouter.env."""
+    if explicit:
+        return explicit
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if key:
+        return key
+    env_file = Path.home() / ".claude" / "openrouter.env"
+    try:
+        if env_file.is_file():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.startswith("OPENROUTER_API_KEY="):
+                    return line.split("=", 1)[1].strip().strip("'\"")
+    except (OSError, UnicodeDecodeError) as exc:
+        eprint(f"could not read {env_file}: {exc}")
+    return ""
+
+
 ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     "tree_ring": [
         {"engine": "clean_treering.py", "args": ["--mode", "filter"]},
-        {"engine": "clean_fmdiffwa.py", "args": []},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "gaussian_shading": [
         {"engine": "clean_marknull.py", "args": ["--mode", "fast"]},
-        {"engine": "clean_fmdiffwa.py", "args": []},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "stegastamp": [
-        {"engine": "clean_fmdiffwa.py", "args": []},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
         {
             "engine": "clean_synthid_bypass.py",
             "args": ["--pipeline", "vae_roundtrip+channel_squeeze"],
         },
+        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "stable_signature": [
         {"engine": "clean_nfpa.py", "args": []},
-        {"engine": "clean_fmdiffwa.py", "args": []},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "synthid": [
         {"engine": "clean_synthid_bypass.py", "args": ["--pipeline", "vae_roundtrip+elastic_warp"]},
-        {"engine": "clean_fmdiffwa.py", "args": []},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "hidden": [
-        {"engine": "clean_fmdiffwa.py", "args": []},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "normal"]},
     ],
     "trustmark": [
-        {"engine": "clean_fmdiffwa.py", "args": []},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
         {"engine": "clean_nfpa.py", "args": []},
+        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "unknown": [
-        {"engine": "clean_fmdiffwa.py", "args": []},
-        {"engine": "clean_marknull.py", "args": ["--mode", "fast"]},
+        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "normal"]},
     ],
 }
 
@@ -81,6 +120,8 @@ def _run_engine(
     extra_args: list[str],
     device: str | None,
     timeout: int,
+    api_key: str = "",
+    input_size: tuple[int, int] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [
         sys.executable,
@@ -90,9 +131,14 @@ def _run_engine(
         str(output_path),
         "--json",
     ]
-    if device:
+    if device and script not in _FLUX3_ENGINES:
         cmd.extend(["--device", device])
+    if script in _FLUX3_ENGINES and input_size and "--resolution" not in extra_args:
+        cmd.extend(["--resolution", _pick_flux3_resolution(*input_size)])
     cmd.extend(extra_args)
+    env = None
+    if script in _FLUX3_ENGINES and api_key:
+        env = {**os.environ, "OPENROUTER_API_KEY": api_key}
     return subprocess.run(
         cmd,
         capture_output=True,
@@ -100,18 +146,23 @@ def _run_engine(
         check=False,
         timeout=timeout,
         creationflags=subprocess_creationflags,
+        env=env,
     )
 
 
 def _run_forensic(image_path: Path) -> float:
-    result = subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "forensic_check.py"), str(image_path), "--json"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-        creationflags=subprocess_creationflags,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "forensic_check.py"), str(image_path), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+            creationflags=subprocess_creationflags,
+        )
+    except subprocess.TimeoutExpired:
+        eprint(f"forensic check timed out for {image_path}")
+        return 1.0
     if result.returncode == 0:
         try:
             report = json.loads(result.stdout)
@@ -128,14 +179,25 @@ def run_chain(
     device: str | None = None,
     timeout: int = 600,
     stealth_threshold: float = 0.7,
+    api_key: str | None = None,
 ) -> ChainResult:
     if scheme not in VALID_SCHEMES:
         raise ValueError(f"unknown scheme: {scheme}; valid: {sorted(VALID_SCHEMES)}")
 
     chain = ATTACK_CHAINS[scheme]
+    resolved_key = _resolve_api_key(api_key) if any(
+        s["engine"] in _FLUX3_ENGINES for s in chain
+    ) else ""
     t0 = time.monotonic()
     current = image_path
     steps_run = 0
+    original_size: tuple[int, int] | None = None
+    try:
+        from PIL import Image as _Img
+        with _Img.open(image_path) as _im:
+            original_size = _im.size
+    except Exception as exc:
+        eprint(f"could not read input size for post-chain resize: {exc}")
 
     for i, step in enumerate(chain):
         script = step["engine"]
@@ -148,7 +210,10 @@ def run_chain(
             step_out = current.parent / f"{current.stem}.step{i}{current.suffix}"
 
         try:
-            result = _run_engine(script, current, step_out, step["args"], device, timeout)
+            result = _run_engine(
+                script, current, step_out, step["args"], device, timeout,
+                api_key=resolved_key, input_size=original_size,
+            )
         except subprocess.TimeoutExpired:
             eprint(f"{script} timed out after {timeout}s")
             break
@@ -163,15 +228,34 @@ def run_chain(
             eprint(f"{script} failed (exit {result.returncode}): {result.stderr[:200]}")
             continue
 
-        stealth = _run_forensic(current)
-        if stealth < stealth_threshold:
-            break
+        remaining_has_flux3 = any(
+            s["engine"] in _FLUX3_ENGINES for s in chain[i + 1 :]
+        )
+        if not remaining_has_flux3:
+            stealth = _run_forensic(current)
+            if stealth < stealth_threshold:
+                break
 
     if output_path and current != output_path:
         import shutil
 
         shutil.copy2(str(current), str(output_path))
         current = output_path
+
+    if original_size is not None:
+        try:
+            import io
+
+            from PIL import Image as _Img
+            with _Img.open(current) as out_im:
+                if out_im.size != original_size:
+                    resized = out_im.resize(original_size, _Img.Resampling.LANCZOS)
+                    buf = io.BytesIO()
+                    resized.save(buf, format=out_im.format or "PNG", quality=95)
+                    Path(current).write_bytes(buf.getvalue())
+                    eprint(f"resized {out_im.size} -> {original_size} to match input")
+        except Exception as exc:
+            eprint(f"resize failed, keeping Flux3 output size: {exc}")
 
     final_stealth = _run_forensic(current)
     elapsed = time.monotonic() - t0
@@ -203,6 +287,11 @@ def main() -> int:
         type=float,
         default=0.7,
         help="Stop chain when stealth score drops below this (default: 0.7)",
+    )
+    p.add_argument(
+        "--flux3-api-key",
+        default=None,
+        help="OpenRouter API key for FLUX 3 steps (default: $OPENROUTER_API_KEY or ~/.claude/openrouter.env)",
     )
     p.add_argument("--json", action="store_true", help="Emit JSON on stdout")
     args = p.parse_args()
@@ -245,6 +334,7 @@ def main() -> int:
             device=args.device,
             timeout=args.timeout,
             stealth_threshold=args.stealth_threshold,
+            api_key=args.flux3_api_key,
         )
     except ValueError as e:
         eprint(str(e))
