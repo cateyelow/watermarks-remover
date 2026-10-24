@@ -78,7 +78,7 @@ ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
         {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
         {
             "engine": "clean_synthid_bypass.py",
-            "args": ["--pipeline", "vae_roundtrip+channel_squeeze"],
+            "args": ["--pipeline", "vae+squeeze"],
         },
         {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
@@ -88,9 +88,9 @@ ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
         {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "synthid": [
-        {"engine": "clean_synthid_bypass.py", "args": ["--pipeline", "vae_roundtrip+elastic_warp"]},
+        {"engine": "clean_synthid_bypass.py", "args": ["--pipeline", "vae+warp+squeeze+jpeg"]},
         {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
-        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "normal"]},
     ],
     "hidden": [
         {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},

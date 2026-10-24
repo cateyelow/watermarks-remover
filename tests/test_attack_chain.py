@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,27 @@ def test_valid_schemes_cover_all_known():
         "unknown",
     }
     assert expected == VALID_SCHEMES
+
+
+def test_synthid_bypass_pipeline_stages_are_valid():
+    """All pipeline args in ATTACK_CHAINS that invoke clean_synthid_bypass.py
+    must use stage names that clean_synthid_bypass.py actually accepts."""
+    from attack_chain import ATTACK_CHAINS
+    from clean_synthid_bypass import STAGES as VALID_STAGES
+
+    for scheme, chain in ATTACK_CHAINS.items():
+        for step in chain:
+            if step["engine"] != "clean_synthid_bypass.py":
+                continue
+            args = step["args"]
+            if "--pipeline" not in args:
+                continue
+            pipeline_str = args[args.index("--pipeline") + 1]
+            stages = [s.strip().lower() for s in pipeline_str.replace("+", ",").split(",")]
+            for s in stages:
+                assert s in VALID_STAGES, (
+                    f"scheme {scheme!r}: stage {s!r} not in {VALID_STAGES}"
+                )
 
 
 def test_chain_result_structure():
@@ -298,3 +320,104 @@ def test_flux3_timeout_applies_to_flux3_step(tmp_path):
                  if k not in _FLUX3_ENGINES and k != "forensic_check.py"}
     for engine_name, t in non_flux3.items():
         assert t == 300, f"{engine_name} got timeout {t}, expected 300"
+
+
+import json as _json
+
+import pytest
+
+FIXTURES = ROOT / "tests" / "fixtures"
+BENCHMARKS = ROOT / "benchmarks"
+_SYNTHID_WATERMARKED = FIXTURES / "real_synthid_watermarked.png"
+_SYNTHID_ATTACKED = FIXTURES / "real_synthid_attacked_unknown_chain.png"
+_TREERING_WATERMARKED = FIXTURES / "real_treering_watermarked.png"
+_TREERING_ATTACKED = FIXTURES / "real_treering_attacked.png"
+_TREERING_REPEAT = FIXTURES / "real_treering_attacked_repeat.png"
+_REVERSE_SYNTHID = Path(
+    os.environ.get("REVERSE_SYNTHID_DIR", "G:/GitHub/reverse-SynthID")
+)
+
+
+def _skip_unless_fixture(*paths: Path):
+    for p in paths:
+        if not p.is_file():
+            pytest.skip(f"fixture not found: {p.name}")
+
+
+def _run_benchmark(script: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(BENCHMARKS / script), *args],
+        text=True, capture_output=True, check=False, timeout=180,
+    )
+
+
+def test_synthid_fixture_detected_before_attack():
+    """The real SynthID watermarked fixture must score as watermarked."""
+    _skip_unless_fixture(_SYNTHID_WATERMARKED)
+    if not _REVERSE_SYNTHID.is_dir():
+        pytest.skip("reverse-SynthID checkout not found")
+    r = _run("score_synthid.py", str(_SYNTHID_WATERMARKED),
+             "--upstream-dir", str(_REVERSE_SYNTHID), "--json")
+    if r.returncode == 3:
+        pytest.skip("SynthID scorer unavailable")
+    assert r.returncode == 0, r.stderr
+    data = _json.loads(r.stdout)
+    assert data["is_watermarked"] is True, f"confidence={data.get('confidence')}"
+
+
+def test_synthid_unknown_chain_removes_watermark():
+    """The unknown chain (FFT+Flux3) output must not be detected as SynthID."""
+    _skip_unless_fixture(_SYNTHID_ATTACKED)
+    if not _REVERSE_SYNTHID.is_dir():
+        pytest.skip("reverse-SynthID checkout not found")
+    r = _run("score_synthid.py", str(_SYNTHID_ATTACKED),
+             "--upstream-dir", str(_REVERSE_SYNTHID), "--json")
+    if r.returncode == 3:
+        pytest.skip("SynthID scorer unavailable")
+    assert r.returncode == 0, r.stderr
+    data = _json.loads(r.stdout)
+    assert data["is_watermarked"] is False, \
+        f"SynthID still detected after unknown chain: confidence={data.get('confidence')}"
+
+
+def _run_treering_decode(image_path: Path) -> dict:
+    """Run decode_treering.py; skip only on missing dependencies, fail on other errors."""
+    if not (BENCHMARKS / "decode_treering.py").is_file():
+        pytest.skip("decode_treering.py not found in benchmarks/")
+    r = _run_benchmark("decode_treering.py", str(image_path), "--json")
+    if r.returncode != 0:
+        _dep_kw = ("ModuleNotFoundError", "No module named")
+        if any(kw in r.stderr for kw in _dep_kw):
+            pytest.skip(f"decode_treering missing dependency: {r.stderr[:120]}")
+        try:
+            err_data = _json.loads(r.stdout)
+            err_msg = err_data.get("error", "")
+            if any(kw in err_msg for kw in _dep_kw):
+                pytest.skip(f"decode_treering missing dependency: {err_msg[:120]}")
+        except (ValueError, KeyError):
+            pass
+        raise AssertionError(f"decode_treering failed (exit {r.returncode}): {r.stderr[:200]} {r.stdout[:200]}")
+    return _json.loads(r.stdout)
+
+
+def test_treering_fixture_detected_before_attack():
+    """The real Tree-Ring watermarked fixture must decode as detected."""
+    _skip_unless_fixture(_TREERING_WATERMARKED)
+    data = _run_treering_decode(_TREERING_WATERMARKED)
+    assert data["detected"] is True, f"L1={data.get('l1_dist')}"
+
+
+def test_treering_attacked_evades_detection():
+    """The attacked Tree-Ring fixture must evade detection (L1 > 78)."""
+    _skip_unless_fixture(_TREERING_ATTACKED)
+    data = _run_treering_decode(_TREERING_ATTACKED)
+    assert data["detected"] is False, f"L1={data.get('l1_dist')} (threshold 78)"
+    assert data["l1_dist"] > 78.0
+
+
+def test_treering_repeat_also_evades():
+    """A second independent run also evades Tree-Ring detection."""
+    _skip_unless_fixture(_TREERING_REPEAT)
+    data = _run_treering_decode(_TREERING_REPEAT)
+    assert data["detected"] is False, f"L1={data.get('l1_dist')} (threshold 78)"
+    assert data["l1_dist"] > 78.0
