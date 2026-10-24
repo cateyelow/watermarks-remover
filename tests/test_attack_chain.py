@@ -126,7 +126,7 @@ def test_flux3_step_is_reached_after_fft(tmp_path):
     """Verify that the Flux3 step is NOT skipped by the forensic early stop."""
     import shutil as _shutil
 
-    from attack_chain import run_chain
+    from attack_chain import ATTACK_CHAINS, run_chain
 
     img = tmp_path / "input.png"
     _write_random_png(img, 128, 128)
@@ -145,9 +145,10 @@ def test_flux3_step_is_reached_after_fft(tmp_path):
         return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true}', stderr="")
 
     with patch("attack_chain.subprocess.run", side_effect=mock_run):
-        result = run_chain(img, "unknown", output_path=out, stealth_threshold=0.7)
+        result = run_chain(img, "stegastamp", output_path=out, stealth_threshold=0.7)
 
-    assert result.steps_run == 2, f"expected both steps to run, got {result.steps_run}"
+    expected = len(ATTACK_CHAINS["stegastamp"])
+    assert result.steps_run == expected, f"expected {expected} steps to run, got {result.steps_run}"
     assert "clean_flux3.py" in engines_called, f"Flux3 was never called: {engines_called}"
 
 
@@ -238,7 +239,7 @@ def test_non_flux3_timeout_marks_incomplete(tmp_path):
         if script_name == "clean_fmdiffwa.py":
             _shutil.copy2(str(img), str(step_out))
             raise subprocess.TimeoutExpired(cmd, 600)
-        if script_name == "clean_treering.py":
+        if script_name == "clean_marknull.py":
             _shutil.copy2(str(img), str(step_out))
             return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true}', stderr="")
         if script_name == "forensic_check.py":
@@ -246,7 +247,7 @@ def test_non_flux3_timeout_marks_incomplete(tmp_path):
         return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true}', stderr="")
 
     with patch("attack_chain.subprocess.run", side_effect=mock_run):
-        result = run_chain(img, "tree_ring", output_path=out, stealth_threshold=0.7)
+        result = run_chain(img, "gaussian_shading", output_path=out, stealth_threshold=0.7)
 
     assert result.steps_run == 1, f"expected 1 step to succeed, got {result.steps_run}"
     assert not result.complete, "chain should be incomplete when pre-Flux3 step times out"
@@ -367,7 +368,7 @@ def test_synthid_fixture_detected_before_attack():
 
 
 def test_synthid_unknown_chain_removes_watermark():
-    """The unknown chain (FFT+Flux3) output must not be detected as SynthID."""
+    """The unknown chain (Flux3 regeneration) output must not be detected as SynthID."""
     _skip_unless_fixture(_SYNTHID_ATTACKED)
     if not _REVERSE_SYNTHID.is_dir():
         pytest.skip("reverse-SynthID checkout not found")
@@ -437,3 +438,108 @@ def test_treering_repeat_also_evades():
     data = _run_treering_decode(_TREERING_REPEAT)
     assert data["detected"] is False, f"L1={data.get('l1_dist')} (threshold 78)"
     assert data["l1_dist"] > 78.0
+
+
+def _grayscale(path: Path):
+    """Load an image as a float grayscale array, or skip when numpy/Pillow are absent."""
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError as exc:
+        pytest.skip(f"quality checks need numpy+Pillow: {exc}")
+    with Image.open(path) as im:
+        return np.asarray(im.convert("L"), dtype=float)
+
+
+def _highfreq_energy(gray) -> float:
+    """Laplacian residual std: additive grain and noise raise this sharply."""
+    lap = gray[1:-1, 1:-1] * 4 - gray[:-2, 1:-1] - gray[2:, 1:-1] - gray[1:-1, :-2] - gray[1:-1, 2:]
+    return float(lap.std())
+
+
+def _residual_stripe_coherence(source_path: Path, attacked_path: Path) -> float:
+    """How column-coherent the attack's residual is, relative to incoherent change.
+
+    Vertical banding survives averaging down the columns; unstructured change
+    cancels, shrinking by sqrt(height).  Dividing the measured column-profile
+    energy by that expectation puts honest regeneration near 1 whatever its
+    magnitude, which a raw energy cannot do -- regeneration that moves pixels
+    further would otherwise look like banding.
+
+    The normalisation cuts both ways: because the denominator grows with the
+    residual, a given stripe amplitude is easier to detect on a near-identity
+    output than on a heavily redrawn one.  Measured on these fixtures, an
+    injected 6px-period stripe trips the limit at +-0.5 gray levels on the
+    SynthID output but needs +-4 on the Tree-Ring output.
+    """
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(source_path) as im:
+        size = im.size
+    src = _grayscale(source_path)
+    with Image.open(attacked_path) as im:
+        att = im.convert("L")
+        if att.size != size:
+            att = att.resize(size, Image.Resampling.LANCZOS)
+        att = np.asarray(att, dtype=float)
+
+    residual = att - src
+    col = residual.mean(axis=0)
+    smooth = np.convolve(col, np.ones(31) / 31, mode="same")
+    measured = float((col - smooth)[20:-20].std())
+    incoherent = float(residual.std() / np.sqrt(residual.shape[0]))
+    return measured / max(incoherent, 1e-9)
+
+
+# An attacked image may not add grain beyond this multiple of the source's own
+# high-frequency energy.  PGD-style additive noise measured 2.6-2.7x and looked
+# obviously filtered; diffusion resampling stays near 1.0x.
+_MAX_GRAIN_RATIO = 1.5
+# Column coherence of the residual.  The regression this guards against is a
+# chain with the full-image FFT stage back in it: the previously committed
+# FFT+Flux3 fixtures measure 9.5 and 12.8 (the FFT stage alone, 13.8).  Every
+# current regeneration output measures 1.6-2.7, so 5.0 sits between them.
+_MAX_STRIPE_COHERENCE = 5.0
+
+
+@pytest.mark.parametrize("attacked", [_TREERING_ATTACKED, _TREERING_REPEAT])
+def test_treering_attacked_has_no_added_grain(attacked):
+    """The Tree-Ring attack must not leave visible noise texture (user-facing quality)."""
+    _skip_unless_fixture(_TREERING_WATERMARKED, attacked)
+    src = _highfreq_energy(_grayscale(_TREERING_WATERMARKED))
+    out = _highfreq_energy(_grayscale(attacked))
+    assert out <= src * _MAX_GRAIN_RATIO, (
+        f"{attacked.name} added grain: {out:.2f} vs source {src:.2f} "
+        f"(limit {src * _MAX_GRAIN_RATIO:.2f})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "attacked", "label"),
+    [
+        (_SYNTHID_WATERMARKED, _SYNTHID_ATTACKED_SYNTHID_CHAIN, "synthid chain"),
+        (_SYNTHID_WATERMARKED, _SYNTHID_ATTACKED, "unknown chain"),
+        (_TREERING_WATERMARKED, _TREERING_ATTACKED, "tree_ring chain"),
+    ],
+)
+def test_attacked_output_has_no_vertical_banding(source, attacked, label):
+    """No chain may leave FFT-style vertical stripes (user-facing quality)."""
+    _skip_unless_fixture(source, attacked)
+    coherence = _residual_stripe_coherence(source, attacked)
+    assert coherence <= _MAX_STRIPE_COHERENCE, (
+        f"{label} output shows vertical banding: column coherence {coherence:.2f} "
+        f"(limit {_MAX_STRIPE_COHERENCE})"
+    )
+
+
+def test_every_chain_engine_script_exists():
+    """Each engine named in ATTACK_CHAINS must be a real script in service/scripts/."""
+    from attack_chain import ATTACK_CHAINS
+
+    for scheme, chain in ATTACK_CHAINS.items():
+        for step in chain:
+            engine = step["engine"]
+            assert (SCRIPTS / engine).is_file(), (
+                f"scheme {scheme!r} names missing engine {engine!r}"
+            )

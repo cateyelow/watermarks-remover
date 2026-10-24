@@ -23,8 +23,16 @@ verification.
 | NFPA | `clean_nfpa.py` | Next-frame prediction attack |
 | FMDiffWA | `clean_fmdiffwa.py` | Frequency-domain diffusion watermark attack |
 | SynthID bypass | `clean_synthid_bypass.py` | Spectral notch filtering for SynthID |
-| Tree-Ring attack | `clean_treering.py` | Frequency notch + optional VAE+PGD |
+| Tree-Ring attack | `clean_treering.py` | Frequency notch + optional pixel-space PGD |
+| SDEdit resampling | `clean_sdedit.py` | Local diffusion img2img renoise/denoise (SD 2.1) |
 | Re-watermarking | `clean_rewatermark.py` | Injects a competing watermark signal |
+
+`clean_sdedit.py` is the default engine for latent-space watermarks.  Unlike
+the PGD mode of `clean_treering.py`, which adds a bounded pixel perturbation
+that reads as grain, SDEdit resamples the image through the diffusion model so
+the output carries model-native texture.  Measured on the Tree-Ring fixture,
+PGD raised high-frequency energy to 2.6x the source image's own while SDEdit
+stayed at 1.1x.
 
 ## Quick Start
 

@@ -65,9 +65,10 @@ def _resolve_api_key(explicit: str | None) -> str:
 
 ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     "tree_ring": [
-        {"engine": "clean_treering.py", "args": ["--mode", "pgd", "--iterations", "200", "--epsilon", "0.05"]},
-        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
-        {"engine": "clean_flux3.py", "args": ["--strength", "maximum", "--resolution", "1k"]},
+        # Across 5 runs 0.40 held L1 80.04-81.96 against the 78 threshold
+        # (worst margin 2.0); 0.30 fell to 78.78. Grain stays within 1.12x
+        # of the source image's own.
+        {"engine": "clean_sdedit.py", "args": ["--strength", "0.40"]},
     ],
     "gaussian_shading": [
         {"engine": "clean_marknull.py", "args": ["--mode", "fast"]},
@@ -88,11 +89,9 @@ ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
         {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "synthid": [
-        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
         {"engine": "clean_flux3.py", "args": ["--strength", "normal"]},
     ],
     "hidden": [
-        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
         {"engine": "clean_flux3.py", "args": ["--strength", "normal"]},
     ],
     "trustmark": [
@@ -101,7 +100,6 @@ ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
         {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
     ],
     "unknown": [
-        {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
         {"engine": "clean_flux3.py", "args": ["--strength", "normal"]},
     ],
 }
