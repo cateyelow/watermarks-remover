@@ -330,6 +330,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 BENCHMARKS = ROOT / "benchmarks"
 _SYNTHID_WATERMARKED = FIXTURES / "real_synthid_watermarked.png"
 _SYNTHID_ATTACKED = FIXTURES / "real_synthid_attacked_unknown_chain.png"
+_SYNTHID_ATTACKED_SYNTHID_CHAIN = FIXTURES / "real_synthid_attacked_synthid_chain.png"
 _TREERING_WATERMARKED = FIXTURES / "real_treering_watermarked.png"
 _TREERING_ATTACKED = FIXTURES / "real_treering_attacked.png"
 _TREERING_REPEAT = FIXTURES / "real_treering_attacked_repeat.png"
@@ -398,6 +399,21 @@ def _run_treering_decode(image_path: Path) -> dict:
             pass
         raise AssertionError(f"decode_treering failed (exit {r.returncode}): {r.stderr[:200]} {r.stdout[:200]}")
     return _json.loads(r.stdout)
+
+
+def test_synthid_chain_fixture_removes_watermark():
+    """The synthid chain fixture must not be detected as SynthID watermarked."""
+    _skip_unless_fixture(_SYNTHID_ATTACKED_SYNTHID_CHAIN)
+    if not _REVERSE_SYNTHID.is_dir():
+        pytest.skip("reverse-SynthID checkout not found")
+    r = _run("score_synthid.py", str(_SYNTHID_ATTACKED_SYNTHID_CHAIN),
+             "--upstream-dir", str(_REVERSE_SYNTHID), "--json")
+    if r.returncode == 3:
+        pytest.skip("SynthID scorer unavailable")
+    assert r.returncode == 0, r.stderr
+    data = _json.loads(r.stdout)
+    assert data["is_watermarked"] is False, \
+        f"SynthID still detected after synthid chain: confidence={data.get('confidence')}"
 
 
 def test_treering_fixture_detected_before_attack():
