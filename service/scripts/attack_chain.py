@@ -65,9 +65,9 @@ def _resolve_api_key(explicit: str | None) -> str:
 
 ATTACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     "tree_ring": [
-        {"engine": "clean_treering.py", "args": ["--mode", "filter"]},
+        {"engine": "clean_treering.py", "args": ["--mode", "pgd", "--iterations", "200", "--epsilon", "0.05"]},
         {"engine": "clean_fmdiffwa.py", "args": ["--intensity", "0"]},
-        {"engine": "clean_flux3.py", "args": ["--strength", "minimal"]},
+        {"engine": "clean_flux3.py", "args": ["--strength", "maximum", "--resolution", "1k"]},
     ],
     "gaussian_shading": [
         {"engine": "clean_marknull.py", "args": ["--mode", "fast"]},
