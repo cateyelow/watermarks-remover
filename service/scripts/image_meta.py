@@ -2561,12 +2561,19 @@ def clean_image(
                 chain_args.extend(["--flux3-resolution", flux3_resolution])
             if flux3_strength is not None:
                 chain_args.extend(["--flux3-strength", flux3_strength])
+            if flux3_provider != "openrouter":
+                chain_args.extend(["--flux3-provider", flux3_provider])
+            if flux3_timeout != 600:
+                chain_args.extend(["--flux3-timeout", str(flux3_timeout)])
             chain_env = {}
             if flux3_api_key:
                 chain_env["OPENROUTER_API_KEY"] = flux3_api_key
+            # Budget: classify(120) + up to 2 local steps(600 each) +
+            # Flux3(flux3_timeout) + up to 3 forensic checks(120 each) + buffer(60)
+            chain_timeout = 120 + 2 * 600 + flux3_timeout + 3 * 120 + 60
             pixel_removal = _run_engine_script(
                 "attack_chain.py", dest, dest, extra_args=chain_args or None,
-                timeout=flux3_timeout, env=chain_env or None,
+                timeout=chain_timeout, env=chain_env or None,
             )
             label = "AttackChain" if pixel_removal.get("available") else "AttackChain skipped"
             actions.append(f"{label}: {pixel_removal.get('error', 'ok')}")

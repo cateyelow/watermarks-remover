@@ -194,3 +194,107 @@ def test_api_key_not_in_process_args(tmp_path):
                   if Path(cmd[1]).name in _FLUX3_ENGINES]
     assert any(e and e.get("OPENROUTER_API_KEY") == "secret-key-123" for e in flux3_envs), \
         "API key must be passed via OPENROUTER_API_KEY env var"
+
+
+def test_non_flux3_timeout_marks_incomplete(tmp_path):
+    """A timeout in a pre-Flux3 step (with steps_run>0) must set flux3_failed."""
+    import shutil as _shutil
+
+    from attack_chain import _FLUX3_ENGINES, run_chain
+
+    img = tmp_path / "input.png"
+    _write_random_png(img, 64, 64)
+    out = tmp_path / "output.png"
+
+    engines_called: list[str] = []
+
+    def mock_run(cmd, **kwargs):
+        script_name = Path(cmd[1]).name if len(cmd) > 1 else ""
+        engines_called.append(script_name)
+        out_idx = cmd.index("-o") + 1 if "-o" in cmd else -1
+        step_out = Path(cmd[out_idx]) if out_idx > 0 else out
+        if script_name == "clean_fmdiffwa.py":
+            _shutil.copy2(str(img), str(step_out))
+            raise subprocess.TimeoutExpired(cmd, 600)
+        if script_name == "clean_treering.py":
+            _shutil.copy2(str(img), str(step_out))
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true}', stderr="")
+        if script_name == "forensic_check.py":
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"stealth_score":0.9}', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true}', stderr="")
+
+    with patch("attack_chain.subprocess.run", side_effect=mock_run):
+        result = run_chain(img, "tree_ring", output_path=out, stealth_threshold=0.7)
+
+    assert result.steps_run == 1, f"expected 1 step to succeed, got {result.steps_run}"
+    assert not result.complete, "chain should be incomplete when pre-Flux3 step times out"
+    assert not any(Path(e).name in _FLUX3_ENGINES for e in engines_called), \
+        f"Flux3 should not have been called: {engines_called}"
+
+
+def test_flux3_provider_forwarded(tmp_path):
+    """Verify --provider is forwarded to Flux3 engine."""
+    import shutil as _shutil
+
+    from attack_chain import _FLUX3_ENGINES, run_chain
+
+    img = tmp_path / "input.png"
+    _write_random_png(img, 64, 64)
+    out = tmp_path / "output.png"
+
+    captured_cmds: list[list[str]] = []
+
+    def mock_run(cmd, **kwargs):
+        captured_cmds.append(list(cmd))
+        script_name = Path(cmd[1]).name if len(cmd) > 1 else ""
+        out_idx = cmd.index("-o") + 1 if "-o" in cmd else -1
+        step_out = Path(cmd[out_idx]) if out_idx > 0 else out
+        _shutil.copy2(str(img), str(step_out))
+        if script_name == "forensic_check.py":
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"stealth_score":0.05}', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true}', stderr="")
+
+    with patch("attack_chain.subprocess.run", side_effect=mock_run):
+        run_chain(img, "unknown", output_path=out, flux3_provider="bfl")
+
+    flux3_cmds = [c for c in captured_cmds if Path(c[1]).name in _FLUX3_ENGINES]
+    assert flux3_cmds, "Flux3 was never called"
+    assert any("--provider" in c and "bfl" in c for c in flux3_cmds), \
+        f"--provider bfl not found in Flux3 commands: {flux3_cmds}"
+
+
+def test_flux3_timeout_applies_to_flux3_step(tmp_path):
+    """Verify flux3_timeout is used for Flux3 step, not the general timeout."""
+    import shutil as _shutil
+
+    from attack_chain import _FLUX3_ENGINES, run_chain
+
+    img = tmp_path / "input.png"
+    _write_random_png(img, 64, 64)
+    out = tmp_path / "output.png"
+
+    captured_timeouts: dict[str, int] = {}
+
+    def mock_run(cmd, **kwargs):
+        script_name = Path(cmd[1]).name if len(cmd) > 1 else ""
+        captured_timeouts[script_name] = kwargs.get("timeout", 0)
+        out_idx = cmd.index("-o") + 1 if "-o" in cmd else -1
+        step_out = Path(cmd[out_idx]) if out_idx > 0 else out
+        _shutil.copy2(str(img), str(step_out))
+        if script_name == "forensic_check.py":
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"stealth_score":0.05}', stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true}', stderr="")
+
+    with patch("attack_chain.subprocess.run", side_effect=mock_run):
+        run_chain(img, "unknown", output_path=out, timeout=300, flux3_timeout=120)
+
+    flux3_called = [e for e in _FLUX3_ENGINES if e in captured_timeouts]
+    assert flux3_called, f"Flux3 was never called; engines: {list(captured_timeouts)}"
+    for engine_name in flux3_called:
+        assert captured_timeouts[engine_name] == 120, \
+            f"Flux3 step got timeout {captured_timeouts[engine_name]}, expected 120"
+
+    non_flux3 = {k: v for k, v in captured_timeouts.items()
+                 if k not in _FLUX3_ENGINES and k != "forensic_check.py"}
+    for engine_name, t in non_flux3.items():
+        assert t == 300, f"{engine_name} got timeout {t}, expected 300"

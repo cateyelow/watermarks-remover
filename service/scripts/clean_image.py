@@ -332,6 +332,8 @@ def main() -> int:
                 api_key=args.flux3_api_key, max_cost=args.flux3_max_cost,
                 flux3_resolution=args.flux3_resolution,
                 flux3_strength=args.flux3_strength,
+                flux3_timeout=args.flux3_timeout,
+                flux3_provider=args.flux3_provider,
             )
             result["pixel_removal"] = {
                 "available": True,
@@ -404,9 +406,12 @@ def main() -> int:
             engine = ENGINE_NAMES.get(
                 args.remove_pixel or "", pr.get("engine", args.remove_pixel or "")
             )
-            if pr.get("available"):
+            if pr.get("available") and pr.get("complete", True):
                 where = pr.get("device") or pr.get("provider") or "unknown device"
                 eprint(f"{engine}: removed on {where}")
+            elif pr.get("available") and not pr.get("complete", True):
+                steps = pr.get("steps_run", "?")
+                eprint(f"{engine}: INCOMPLETE ({steps} steps ran, chain did not finish)")
             else:
                 eprint(f"{engine}: unavailable: {pr.get('error', 'unknown error')}")
         if residual:

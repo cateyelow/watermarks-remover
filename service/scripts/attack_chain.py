@@ -130,6 +130,7 @@ def _run_engine(
     api_key: str = "",
     input_size: tuple[int, int] | None = None,
     max_cost: float | None = None,
+    provider: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [
         sys.executable,
@@ -146,6 +147,8 @@ def _run_engine(
             cmd.extend(["--resolution", _pick_flux3_resolution(*input_size)])
         if max_cost is not None and "--max-cost" not in extra_args:
             cmd.extend(["--max-cost", str(max_cost)])
+        if provider and "--provider" not in extra_args:
+            cmd.extend(["--provider", provider])
     cmd.extend(extra_args)
     env = None
     if script in _FLUX3_ENGINES and api_key:
@@ -194,6 +197,8 @@ def run_chain(
     max_cost: float | None = None,
     flux3_resolution: str | None = None,
     flux3_strength: str | None = None,
+    flux3_timeout: int | None = None,
+    flux3_provider: str | None = None,
 ) -> ChainResult:
     if scheme not in VALID_SCHEMES:
         raise ValueError(f"unknown scheme: {scheme}; valid: {sorted(VALID_SCHEMES)}")
@@ -248,13 +253,16 @@ def run_chain(
                 if flux3_resolution:
                     step_args.extend(["--resolution", flux3_resolution])
 
+            step_timeout = (flux3_timeout if flux3_timeout and script in _FLUX3_ENGINES
+                            else timeout)
             try:
                 result = _run_engine(
-                    script, current, step_out, step_args, device, timeout,
+                    script, current, step_out, step_args, device, step_timeout,
                     api_key=resolved_key, input_size=original_size, max_cost=max_cost,
+                    provider=flux3_provider if script in _FLUX3_ENGINES else None,
                 )
             except subprocess.TimeoutExpired:
-                eprint(f"{script} timed out after {timeout}s")
+                eprint(f"{script} timed out after {step_timeout}s")
                 remaining_has_flux3 = script in _FLUX3_ENGINES or any(
                     s["engine"] in _FLUX3_ENGINES for s in chain[i + 1 :]
                 )
@@ -365,6 +373,18 @@ def main() -> int:
         default=None,
         help="Override FLUX 3 prompt strength (default: per-scheme chain definition)",
     )
+    p.add_argument(
+        "--flux3-timeout",
+        type=int,
+        default=None,
+        help="FLUX 3 stage timeout in seconds (default: same as --timeout)",
+    )
+    p.add_argument(
+        "--flux3-provider",
+        choices=["openrouter", "bfl", "fal"],
+        default=None,
+        help="FLUX 3 provider (default: openrouter)",
+    )
     p.add_argument("--json", action="store_true", help="Emit JSON on stdout")
     args = p.parse_args()
 
@@ -410,6 +430,8 @@ def main() -> int:
             max_cost=args.flux3_max_cost,
             flux3_resolution=args.flux3_resolution,
             flux3_strength=args.flux3_strength,
+            flux3_timeout=args.flux3_timeout,
+            flux3_provider=args.flux3_provider,
         )
     except ValueError as e:
         eprint(str(e))
